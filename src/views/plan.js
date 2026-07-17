@@ -2,7 +2,12 @@ const { pageShell, escapeHtml, jsonForAttr } = require('./layout');
 
 const SLOT_LABELS = { morning: 'Morning (Rice Meal)', noon: 'Noon (Tiffin)', night: 'Night' };
 
-function dayHtml(day, plansByDaySlot, itemsById) {
+function compositionBannerHtml(warning) {
+  if (!warning) return '';
+  return `<div class="composition-banner" role="status" aria-live="polite">${escapeHtml(warning.message)}</div>`;
+}
+
+function dayHtml(day, plansByDaySlot, itemsById, compositionWarnings) {
   const slotsHtml = ['morning', 'noon', 'night']
     .map((slotKey) => {
       const dishes = (plansByDaySlot[day] && plansByDaySlot[day][slotKey]) || [];
@@ -12,6 +17,7 @@ function dayHtml(day, plansByDaySlot, itemsById) {
       return `
       <div style="margin-bottom: var(--space-3);">
         <div class="dish-card__family">${SLOT_LABELS[slotKey]}</div>
+        ${compositionBannerHtml(compositionWarnings[`${day}|${slotKey}`])}
         ${dishesHtml}
         <button class="btn" @click="openPicker(${jsonForAttr(day)}, ${jsonForAttr(slotKey)})">+ Add</button>
       </div>`;
@@ -28,7 +34,7 @@ function dayHtml(day, plansByDaySlot, itemsById) {
 // drives the suggestion-picker sheet, which is genuine post-load interactivity —
 // it has no meaningful "before" state to pre-render since it only exists once a
 // slot is tapped.
-function renderPlan({ days, plans, itemsById }) {
+function renderPlan({ days, plans, itemsById, compositionWarnings = {} }) {
   const plansByDaySlot = {};
   for (const p of plans) {
     (plansByDaySlot[p.date] ||= {});
@@ -38,30 +44,49 @@ function renderPlan({ days, plans, itemsById }) {
   const body = `
   <div x-data="planView()">
     <h1>7-day plan</h1>
-    ${days.map((day) => dayHtml(day, plansByDaySlot, itemsById)).join('\n')}
+    ${days.map((day) => dayHtml(day, plansByDaySlot, itemsById, compositionWarnings)).join('\n')}
 
     <template x-if="picker">
       <div class="sheet-backdrop" @click.self="picker = null">
         <div class="sheet">
-          <h2>Suggestions — <span x-text="picker.date"></span> · <span x-text="slotLabel(picker.slot)"></span></h2>
-          <p x-show="pickerLoading">Loading…</p>
-          <template x-for="s in pickerSuggestions" :key="s.dishItemId">
-            <div class="dish-card">
-              <div style="flex:1;">
-                <div class="dish-card__name" x-text="s.dishName"></div>
+          <div class="sheet__header">
+            <h2>Suggestions — <span x-text="picker.date"></span> · <span x-text="slotLabel(picker.slot)"></span></h2>
+            <p x-show="pickerLoading" style="margin:0;">Loading…</p>
+            <p x-show="pickerCompositionWarning" class="composition-banner" x-text="pickerCompositionWarning && pickerCompositionWarning.message" role="status" aria-live="polite"></p>
+          </div>
+          <div class="sheet__body">
+            <template x-for="group in pickerGroups" :key="group.role">
+              <div>
+                <div class="suggestion-group__header" x-text="group.role.replace(/_/g, ' ')"></div>
+                <template x-for="s in (expandedGroups[group.role] ? group.items : group.top)" :key="s.dishItemId">
+                  <div class="dish-card">
+                    <div style="flex:1;">
+                      <div class="dish-card__name" x-text="s.dishName"></div>
+                    </div>
+                    <span :class="'chip chip--' + (s.status === 'warn' ? 'avoid' : (s.score > 100 ? 'preferred' : 'allowed'))" x-text="s.status === 'warn' ? 'avoid' : (s.score > 100 ? 'preferred' : 'allowed')" @click="choose(s)" style="cursor:pointer;"></span>
+                    <button class="btn" @click="reject(s)" title="Not this dish — remember?">✕</button>
+                  </div>
+                </template>
+                <button
+                  class="suggestion-group__show-all"
+                  x-show="group.hasMore && !expandedGroups[group.role]"
+                  @click="expandedGroups[group.role] = true"
+                  x-text="'Show all ' + group.items.length"
+                ></button>
               </div>
-              <span :class="'chip chip--' + (s.status === 'allowed' ? 'allowed' : 'avoid')" x-text="s.status" @click="choose(s)" style="cursor:pointer;"></span>
-              <button class="btn" @click="reject(s)" title="Not this dish — remember?">✕</button>
-            </div>
-          </template>
-          <button class="btn" @click="picker = null">Close</button>
+            </template>
+            <p x-show="!pickerLoading && pickerGroups.length === 0">No suggestions for this slot.</p>
+          </div>
+          <div class="sheet__footer">
+            <button class="btn" style="width:100%;" @click="picker = null">Close</button>
+          </div>
         </div>
       </div>
     </template>
 
     <template x-if="confirmDish">
       <div class="sheet-backdrop" @click.self="confirmDish = null">
-        <div class="sheet">
+        <div class="sheet sheet--static">
           <h2>This has warnings</h2>
           <p x-text="confirmDish.dishName"></p>
           <template x-for="f in confirmDish.findings" :key="f.message">
@@ -75,7 +100,7 @@ function renderPlan({ days, plans, itemsById }) {
 
     <template x-if="rejectDish">
       <div class="sheet-backdrop" @click.self="rejectDish = null">
-        <div class="sheet">
+        <div class="sheet sheet--static">
           <h2>Remember this?</h2>
           <p><strong x-text="rejectDish.dishName"></strong></p>
           <p x-show="rejectIngredientsLoading">Checking ingredients…</p>
@@ -95,11 +120,15 @@ function renderPlan({ days, plans, itemsById }) {
     </template>
   </div>
   <script src="/alpine.min.js" defer></script>
+  <script src="/suggestion-grouping.js"></script>
   <script>
     function planView() {
       return {
         picker: null,
         pickerSuggestions: [],
+        pickerGroups: [],
+        pickerCompositionWarning: null,
+        expandedGroups: {},
         pickerLoading: false,
         confirmDish: null,
         rejectDish: null,
@@ -110,9 +139,15 @@ function renderPlan({ days, plans, itemsById }) {
         },
         async openPicker(date, slot) {
           this.picker = { date, slot };
+          this.pickerGroups = [];
+          this.pickerCompositionWarning = null;
+          this.expandedGroups = {};
           this.pickerLoading = true;
           const res = await fetch('/api/suggest?date=' + date + '&slot=' + slot);
-          this.pickerSuggestions = await res.json();
+          const data = await res.json();
+          this.pickerSuggestions = data.suggestions;
+          this.pickerCompositionWarning = data.compositionWarning;
+          this.pickerGroups = groupSuggestions(this.pickerSuggestions);
           this.pickerLoading = false;
         },
         choose(s) {

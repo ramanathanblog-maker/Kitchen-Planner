@@ -18,7 +18,16 @@ function rank(db, { date, slot, dishItemIds, leftoverIngredientIds = new Set() }
   const evaluated = dishItemIds.map((dishItemId) => {
     const context = buildContext(db, { dishItemId, date, slot, leftoverIngredientIds });
     const result = evaluate(context);
-    return { dishItemId, dishName: context.dish.name_en, status: result.status, findings: result.findings, score: scoreOf(result) };
+    return {
+      dishItemId,
+      dishName: context.dish.name_en,
+      mealRole: context.dish.meal_role,
+      familyName: context.dish.family_name,
+      heaviness: context.dish.heaviness,
+      status: result.status,
+      findings: result.findings,
+      score: scoreOf(result),
+    };
   });
   return evaluated
     .filter((r) => r.status !== 'blocked')

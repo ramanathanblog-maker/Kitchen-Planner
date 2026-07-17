@@ -2,6 +2,14 @@
 // enforced slot (currently just morning — see settings.meal_composition_enforced_slots).
 // A dish is a lead if its meal_role is in leadRoles OR its can_lead flag is set.
 // Entirely data-driven: never hard-code which classes/items can lead — read the columns.
+//
+// Zero-leads is deliberately NOT evaluated here. Whether a slot has zero leads
+// doesn't depend on the candidate being evaluated — it's a fact about the slot's
+// currently-planned dishes, and folding it into every non-lead candidate's own
+// findings meant an identical warn chip on ~150+ suggestions at once. That check
+// now lives in ../slotComposition.js and is surfaced once as a page-level banner.
+// multiple_leads is genuinely per-candidate: it only fires for a candidate whose
+// own lead-ness would push the slot to a second lead, so it stays a per-dish chip.
 function isLead(item, leadRoles) {
   return leadRoles.includes(item.meal_role) || !!item.can_lead;
 }
@@ -13,17 +21,6 @@ function mealComposition(context) {
   const candidate = { name_en: dish.name_en, meal_role: dish.meal_role, can_lead: dish.can_lead };
   const all = [...(mc.siblings || []), candidate];
   const leads = all.filter((item) => isLead(item, mc.leadRoles));
-
-  if (leads.length === 0) {
-    return [
-      {
-        step: 'meal_composition',
-        severity: mc.zeroLeadsSeverity === 'block' ? 'block' : 'warn',
-        message: `No sambar/kozhambu (or other lead dish) planned for ${slot} on ${context.date}.`,
-        rule_ref: 'setting:meal_composition_zero_leads_severity',
-      },
-    ];
-  }
 
   if (leads.length >= 2) {
     const names = leads.map((l) => l.name_en).join(', ');

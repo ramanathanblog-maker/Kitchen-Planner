@@ -57,8 +57,8 @@ function createApp(db) {
   app.get('/plan', (req, res) => {
     const today = todayStr();
     const days = Array.from({ length: 7 }, (_, i) => addDays(today, i));
-    const { itemsById, plans } = getPlanData(db, days[0], days[6]);
-    res.type('html').send(renderPlan({ days, plans, itemsById }));
+    const { itemsById, plans, compositionWarnings } = getPlanData(db, days[0], days[6]);
+    res.type('html').send(renderPlan({ days, plans, itemsById, compositionWarnings }));
   });
   app.get('/shopping', (req, res) => {
     const today = todayStr();

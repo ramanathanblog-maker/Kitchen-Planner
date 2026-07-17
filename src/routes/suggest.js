@@ -4,6 +4,7 @@ const { assertInDomain, assertRequired } = require('./validate');
 const { buildContext } = require('../engine/context');
 const { evaluate } = require('../engine/evaluate');
 const { rank } = require('../engine/rank');
+const { zeroLeadsWarning } = require('../engine/slotComposition');
 
 // Candidate set for a slot: every dish_item whose family's slot_fit (JSON array)
 // includes the requested slot. Family slot_fit is the single source of slot
@@ -23,8 +24,9 @@ function suggestRouter(db) {
     assertRequired(req.query, ['date', 'slot']);
     assertInDomain(slot, 'slot', 'slot');
     const dishItemIds = candidateIdsForSlot(db, slot);
-    const ranked = rank(db, { date, slot, dishItemIds });
-    res.json(ranked);
+    const suggestions = rank(db, { date, slot, dishItemIds });
+    const compositionWarning = zeroLeadsWarning(db, { date, slot });
+    res.json({ suggestions, compositionWarning });
   });
 
   return router;

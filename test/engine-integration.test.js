@@ -8,6 +8,7 @@ const { seed } = require('../seed/load');
 const { buildContext } = require('../src/engine/context');
 const { evaluate } = require('../src/engine/evaluate');
 const { rank } = require('../src/engine/rank');
+const { zeroLeadsWarning } = require('../src/engine/slotComposition');
 
 function tmpDbPath() {
   return path.join(os.tmpdir(), `kp-engine-test-${process.pid}-${Math.random().toString(36).slice(2)}.db`);
@@ -199,15 +200,25 @@ test('meal composition: milagu rasam alone (can_lead=1) satisfies the lead requi
   }
 });
 
-test('meal composition: paruppu rasam alone (secondary_gravy, can_lead=0) does not satisfy the lead requirement', () => {
+test('meal composition: paruppu rasam alone (secondary_gravy, can_lead=0) does not satisfy the lead requirement — but this is a slot-level fact, not a per-dish finding', () => {
   const dbPath = tmpDbPath();
   try {
     const db = openDb(dbPath);
     seed(db);
     const paruppuRasam = byExternalId(db, 'dish_174');
-    const ctx = buildContext(db, { dishItemId: paruppuRasam.id, date: '2026-07-16', slot: 'morning' });
+    const date = '2026-07-16';
+    db.prepare("INSERT INTO plans (date, slot, dish_item_id) VALUES (?, 'morning', ?)").run(date, paruppuRasam.id);
+
+    const ctx = buildContext(db, { dishItemId: paruppuRasam.id, date, slot: 'morning' });
     const result = evaluate(ctx);
-    assert.ok(result.findings.some((f) => f.step === 'meal_composition' && /No sambar\/kozhambu/.test(f.message)));
+    assert.ok(
+      !result.findings.some((f) => f.step === 'meal_composition'),
+      'zero-leads must never appear in a per-dish findings array (it fired identically for every non-lead candidate before this fix)'
+    );
+
+    const warning = zeroLeadsWarning(db, { date, slot: 'morning' });
+    assert.ok(warning, 'the slot itself has zero leads planned');
+    assert.match(warning.message, /No sambar\/kozhambu/);
     db.close();
   } finally {
     cleanup(dbPath);
@@ -268,18 +279,65 @@ test('meal composition: sambar + kozhambu planned for the same morning warns and
   }
 });
 
-test('meal composition: toggling can_lead off for milagu rasam changes the verdict (reads data, not code)', () => {
+test('meal composition: toggling can_lead off for milagu rasam changes the slot-level verdict (reads data, not code)', () => {
   const dbPath = tmpDbPath();
   try {
     const db = openDb(dbPath);
     seed(db);
     const milaguRasam = byExternalId(db, 'dish_176');
+    const date = '2026-07-16';
 
     db.prepare('UPDATE dish_items SET can_lead = 0 WHERE id = ?').run(milaguRasam.id);
+    db.prepare("INSERT INTO plans (date, slot, dish_item_id) VALUES (?, 'morning', ?)").run(date, milaguRasam.id);
 
-    const ctx = buildContext(db, { dishItemId: milaguRasam.id, date: '2026-07-16', slot: 'morning' });
+    const ctx = buildContext(db, { dishItemId: milaguRasam.id, date, slot: 'morning' });
     const result = evaluate(ctx);
-    assert.ok(result.findings.some((f) => f.step === 'meal_composition' && /No sambar\/kozhambu/.test(f.message)));
+    assert.ok(!result.findings.some((f) => f.step === 'meal_composition'));
+
+    const warning = zeroLeadsWarning(db, { date, slot: 'morning' });
+    assert.ok(warning);
+    assert.match(warning.message, /No sambar\/kozhambu/);
+    db.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+test('zeroLeadsWarning: nothing planned for an enforced slot -> a warning, independent of any specific candidate', () => {
+  const dbPath = tmpDbPath();
+  try {
+    const db = openDb(dbPath);
+    seed(db);
+    const warning = zeroLeadsWarning(db, { date: '2099-01-01', slot: 'morning' });
+    assert.ok(warning);
+    assert.match(warning.message, /No sambar\/kozhambu/);
+    db.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+test('zeroLeadsWarning: a lead dish already planned -> null', () => {
+  const dbPath = tmpDbPath();
+  try {
+    const db = openDb(dbPath);
+    seed(db);
+    const vengayaSambar = byExternalId(db, 'dish_011');
+    const date = '2026-07-16';
+    db.prepare("INSERT INTO plans (date, slot, dish_item_id) VALUES (?, 'morning', ?)").run(date, vengayaSambar.id);
+    assert.equal(zeroLeadsWarning(db, { date, slot: 'morning' }), null);
+    db.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+test('zeroLeadsWarning: a non-enforced slot never warns, regardless of what is planned', () => {
+  const dbPath = tmpDbPath();
+  try {
+    const db = openDb(dbPath);
+    seed(db);
+    assert.equal(zeroLeadsWarning(db, { date: '2099-01-01', slot: 'noon' }), null);
     db.close();
   } finally {
     cleanup(dbPath);

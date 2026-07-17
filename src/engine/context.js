@@ -243,4 +243,4 @@ function buildContext(db, { dishItemId, date, slot, leftoverIngredientIds = new 
   };
 }
 
-module.exports = { buildContext, daysBetween };
+module.exports = { buildContext, daysBetween, loadMealCompositionSettings };

@@ -347,9 +347,15 @@ test('GET /api/suggest and /api/explain', async () => {
   try {
     const res = await fetch(`${ctx.base}/api/suggest?date=2026-07-16&slot=morning`, { headers: pk() });
     assert.equal(res.status, 200);
-    const suggestions = await res.json();
+    const suggestBody = await res.json();
+    const { suggestions } = suggestBody;
+    assert.ok('compositionWarning' in suggestBody, 'response carries the slot-level composition warning separately from per-dish suggestions');
     assert.ok(suggestions.length > 0);
     assert.ok(suggestions.every((s) => s.status !== 'blocked'));
+    assert.ok(
+      suggestions.every((s) => !s.findings.some((f) => f.step === 'meal_composition' && /No sambar/.test(f.message))),
+      'zero-leads is a slot-level condition and must never appear in a per-dish findings array'
+    );
 
     const onionSambar = ctx.db.prepare("SELECT id FROM dish_items WHERE external_id = 'dish_011'").get();
     const explainRes = await fetch(`${ctx.base}/api/explain?dish=${onionSambar.id}&date=2026-07-16&slot=morning`, { headers: pk() });

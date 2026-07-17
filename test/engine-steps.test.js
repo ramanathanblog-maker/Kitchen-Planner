@@ -299,12 +299,9 @@ test('mealComposition: candidate is lead via can_lead=1 even though meal_role is
   assert.deepEqual(mealComposition(ctx), []);
 });
 
-test('mealComposition: candidate is not a lead and no sibling leads -> zero-leads warn', () => {
+test('mealComposition: candidate is not a lead and no sibling leads -> no per-dish finding (zero-leads is a slot-level banner, see slotComposition.js)', () => {
   const ctx = baseContext({ dish: baseDish({ meal_role: 'secondary_gravy', can_lead: 0 }) });
-  const findings = mealComposition(ctx);
-  assert.equal(findings.length, 1);
-  assert.equal(findings[0].severity, 'warn');
-  assert.match(findings[0].message, /No sambar\/kozhambu/);
+  assert.deepEqual(mealComposition(ctx), []);
 });
 
 test('mealComposition: candidate plus an already-planned lead sibling -> multiple-leads warn naming both', () => {
@@ -319,10 +316,13 @@ test('mealComposition: candidate plus an already-planned lead sibling -> multipl
   assert.match(findings[0].message, /Vengaya Sambar/);
 });
 
-test('mealComposition: severity settings are read from context, not hard-coded (block instead of warn)', () => {
+test('mealComposition: multiple-leads severity settings are read from context, not hard-coded (block instead of warn)', () => {
   const ctx = baseContext({
-    dish: baseDish({ meal_role: 'secondary_gravy', can_lead: 0 }),
-    mealComposition: baseMealComposition({ zeroLeadsSeverity: 'block' }),
+    dish: baseDish({ name_en: 'Vengaya Sambar', meal_role: 'main_gravy', can_lead: 1 }),
+    mealComposition: baseMealComposition({
+      multipleLeadsSeverity: 'block',
+      siblings: [{ name_en: 'Mor Kuzhambu', meal_role: 'main_gravy', can_lead: 1 }],
+    }),
   });
   const findings = mealComposition(ctx);
   assert.equal(findings[0].severity, 'block');

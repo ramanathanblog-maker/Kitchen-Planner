@@ -2,6 +2,11 @@ const { pageShell, escapeHtml, jsonForAttr } = require('./layout');
 
 const SLOT_LABELS = { morning: 'Morning (Rice Meal)', noon: 'Noon (Tiffin)', night: 'Night' };
 
+function compositionBannerHtml(warning) {
+  if (!warning) return '';
+  return `<div class="composition-banner" role="status" aria-live="polite">${escapeHtml(warning.message)}</div>`;
+}
+
 function slotHtml(date, slotKey, slotData) {
   const dishesHtml = slotData.dishes.length
     ? slotData.dishes
@@ -17,6 +22,7 @@ function slotHtml(date, slotKey, slotData) {
       </div>
       <span class="chip chip--allowed">${escapeHtml(slotData.source)}</span>
     </div>
+    ${compositionBannerHtml(slotData.compositionWarning)}
     ${dishesHtml}
     <button class="btn" @click="openOverride(${jsonForAttr(slotKey)})">Log what was actually eaten</button>
   </section>`;
@@ -54,6 +60,7 @@ function renderToday(todayData) {
               <span :class="'chip chip--' + (s.status === 'allowed' ? 'allowed' : 'avoid')" x-text="s.status"></span>
             </div>
           </template>
+          <p x-show="overrideCompositionWarning" class="composition-banner" x-text="overrideCompositionWarning && overrideCompositionWarning.message" role="status" aria-live="polite"></p>
           <button class="btn" @click="overrideSlot = null">Cancel</button>
         </div>
       </div>
@@ -66,6 +73,7 @@ function renderToday(todayData) {
         date: date,
         overrideSlot: null,
         overrideSuggestions: [],
+        overrideCompositionWarning: null,
         servedMessage: '',
         slotLabel(key) {
           return { morning: 'Morning (Rice Meal)', noon: 'Noon (Tiffin)', night: 'Night' }[key];
@@ -73,7 +81,9 @@ function renderToday(todayData) {
         async openOverride(slotKey) {
           this.overrideSlot = slotKey;
           const res = await fetch('/api/suggest?date=' + this.date + '&slot=' + slotKey);
-          this.overrideSuggestions = await res.json();
+          const data = await res.json();
+          this.overrideSuggestions = data.suggestions;
+          this.overrideCompositionWarning = data.compositionWarning;
         },
         async markEaten(dishItemId) {
           await fetch('/api/actual_meals', {
