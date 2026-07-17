@@ -19,6 +19,7 @@ const {
   morningGravyCarryover,
   chosenForRole,
   getHubData,
+  dishesClearedByCollapse,
 } = require('../data/wizard');
 const { renderWizardHub, renderWizardRole, renderWizardItems } = require('../views/wizard');
 
@@ -46,6 +47,18 @@ function pageRouter(db) {
     for (const group of groups) {
       for (const fam of group.families) {
         fam.deadEndItemId = fam.items.length === 1 ? fam.items[0].id : null;
+      }
+    }
+    // P2a — single-child drill collapse (generalizes the dead-end rule above): a
+    // class with exactly one family (e.g. Rasam, Thogayal — verified against seed
+    // data, not assumed) has no real "which family?" choice to make, so skip that
+    // screen and render the family's item list inline on this same role-level page
+    // instead of a link to the family drill level. Classes with >1 family (e.g.
+    // Sambar: Regular / Arachuvitta Pitlai) are unaffected — still shown as links.
+    for (const group of groups) {
+      if (group.families.length === 1 && !group.families[0].deadEndItemId) {
+        group.inlineItems = evaluateItemsForLeaf(db, { date, slot, items: group.families[0].items });
+        group.inlineFamilyName = group.families[0].name;
       }
     }
     let carryover = null;
@@ -82,6 +95,16 @@ function pageRouter(db) {
 // hard-coded role names.
 function apiRouter(db) {
   const router = express.Router();
+
+  // P2c — read-only preview for the confirm sheet: which named dishes a
+  // collapses_pattern choice (variety rice) would clear, so the UI can list them
+  // before the destructive clear-collapsed call.
+  router.get('/collapse-preview', (req, res) => {
+    const { date, slot } = req.query;
+    assertRequired(req.query, ['date', 'slot']);
+    assertInDomain(slot, 'slot', 'slot');
+    res.status(200).json({ dishes: dishesClearedByCollapse(db, { date, slot }) });
+  });
 
   router.post('/choose', (req, res) => {
     const body = req.body || {};

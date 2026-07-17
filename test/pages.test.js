@@ -205,6 +205,89 @@ test('Today page end-to-end: pick an editor, plan a dish, load Today, mark day a
   }
 });
 
+// P2d — logging what was actually eaten is a one-tap "as-is" action: the Today
+// page's primary button (visible when a slot is still just "planned") copies the
+// planned dishes into actual_meals directly, no modal required first. Route-level
+// coverage here since the "banner appears"/button-click level needs a browser tool
+// this session doesn't have (see report).
+test('Today page: logging a slot as eaten (one-tap "as-is" path) copies planned dishes into actual_meals without opening the override sheet', async () => {
+  const ctx = await startServer();
+  try {
+    const dish = ctx.db.prepare("SELECT id, name_en FROM dish_items WHERE external_id = 'dish_002'").get();
+    const today = new Date().toISOString().slice(0, 10);
+    const cookie = 'editor=PK';
+
+    const planRes = await fetch(`${ctx.base}/api/plans`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ date: today, slot: 'morning', dish_item_id: dish.id }),
+    });
+    assert.equal(planRes.status, 201);
+
+    // The Today page itself renders a primary "Log as eaten" button for a
+    // still-just-planned slot, and a secondary "Make changes" button.
+    const todayHtml = await (await fetch(`${ctx.base}/`, { headers: { Cookie: cookie } })).text();
+    assert.match(todayHtml, /Log as eaten/);
+    assert.match(todayHtml, /Make changes/);
+
+    // The Today page's "Log as eaten" button loops the slot's already-planned
+    // dishes through POST /api/actual_meals — same call the client JS makes.
+    const logRes = await fetch(`${ctx.base}/api/actual_meals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ date: today, slot: 'morning', dish_item_id: dish.id }),
+    });
+    assert.equal(logRes.status, 201);
+
+    const displayAfter = await (await fetch(`${ctx.base}/api/display/today`)).json();
+    assert.equal(displayAfter.slots.morning.source, 'actual');
+    assert.ok(displayAfter.slots.morning.dishes.some((d) => d.name_en === dish.name_en));
+  } finally {
+    await ctx.close();
+  }
+});
+
+// P2e — a single already-chosen dish can be removed directly (Today view and the
+// wizard hub), without re-entering the guided drill from the top. Uses the
+// existing generic DELETE /api/plans/:id (src/routes/plans.js simpleCrudRouter)
+// and DELETE /api/rules/... pattern — no new route needed.
+test('a single planned dish can be removed directly via DELETE /api/plans/:id, without touching the rest of the slot', async () => {
+  const ctx = await startServer();
+  try {
+    const dishes = ctx.db.prepare("SELECT id FROM dish_items WHERE meal_role = 'dry_side' LIMIT 2").all();
+    const today = new Date().toISOString().slice(0, 10);
+    const cookie = 'editor=PK';
+
+    const plan1 = await (
+      await fetch(`${ctx.base}/api/plans`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ date: today, slot: 'morning', dish_item_id: dishes[0].id }),
+      })
+    ).json();
+    const plan2 = await (
+      await fetch(`${ctx.base}/api/plans`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ date: today, slot: 'morning', dish_item_id: dishes[1].id }),
+      })
+    ).json();
+
+    const delRes = await fetch(`${ctx.base}/api/plans/${plan1.id}`, { method: 'DELETE', headers: { Cookie: cookie } });
+    assert.equal(delRes.status, 204);
+
+    const remaining = ctx.db.prepare('SELECT * FROM plans WHERE date = ? AND slot = ?').all(today, 'morning');
+    assert.ok(remaining.some((r) => r.id === plan2.id), 'the other dish stays planned');
+    assert.ok(!remaining.some((r) => r.id === plan1.id), 'the removed dish is gone');
+
+    // Wizard hub renders a Remove control per chosen dish (P2e).
+    const hubHtml = await (await fetch(`${ctx.base}/plan/${today}/morning`, { headers: { Cookie: cookie } })).text();
+    assert.match(hubHtml, /removePlan\(/);
+  } finally {
+    await ctx.close();
+  }
+});
+
 test('GET /display (kiosk) has a theme toggle that defaults to light and persists via localStorage, scoped to the kiosk page only', async () => {
   const ctx = await startServer();
   try {

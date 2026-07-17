@@ -39,6 +39,7 @@ function renderKnowledge(data) {
           </select>
           <textarea x-model="rule.note" placeholder="note"></textarea>
           <button class="btn btn-primary" @click="saveRule('ingredient_family', rule)">Save</button>
+          <button class="btn" @click="confirmDeleteRule = { pathSegment: 'ingredient_family', id: rule.id, label: rule.ingredient_name + ' × ' + rule.family_name }">Delete</button>
           <p x-show="rule._conflict" style="color: var(--warn);">Changed since you loaded it — reload and reapply.</p>
         </div>
       </template>
@@ -54,10 +55,22 @@ function renderKnowledge(data) {
             <option value="hard">hard</option>
           </select>
           <button class="btn btn-primary" @click="saveRule('dish_repeat', rule)">Save</button>
+          <button class="btn" @click="confirmDeleteRule = { pathSegment: 'dish_repeat', id: rule.id, label: rule.dish_name }">Delete</button>
           <p x-show="rule._conflict" style="color: var(--warn);">Changed since you loaded it — reload and reapply.</p>
         </div>
       </template>
     </section>
+
+    <template x-if="confirmDeleteRule">
+      <div class="sheet-backdrop" @click.self="confirmDeleteRule = null">
+        <div class="sheet sheet--static">
+          <h2>Delete this rule?</h2>
+          <p><strong x-text="confirmDeleteRule.label"></strong></p>
+          <button class="btn btn-primary" style="display:block; width:100%; margin-bottom: var(--space-2);" @click="deleteRule(confirmDeleteRule.pathSegment, confirmDeleteRule.id); confirmDeleteRule = null">Delete</button>
+          <button class="btn" style="width:100%;" @click="confirmDeleteRule = null">Cancel</button>
+        </div>
+      </div>
+    </template>
 
     <section x-show="tab === 'events'">
       <template x-for="ev in events" :key="ev.id">
@@ -97,12 +110,28 @@ function renderKnowledge(data) {
             rule._conflict = true;
             return;
           }
+          if (!res.ok) {
+            let message = 'Save failed (' + res.status + ').';
+            try {
+              const body = await res.json();
+              if (body && body.error) message = body.error;
+            } catch (e) { /* non-JSON error body */ }
+            kpShowError(message);
+            return;
+          }
+          window.location.reload();
+        },
+        async deleteRule(pathSegment, ruleId) {
+          const res = await kpFetch('/api/rules/' + pathSegment + '/' + ruleId, { method: 'DELETE' });
+          if (!res.ok) return;
           window.location.reload();
         },
         async undo(eventId) {
-          await fetch('/api/knowledge_events/' + eventId + '/undo', { method: 'POST' });
+          const res = await kpFetch('/api/knowledge_events/' + eventId + '/undo', { method: 'POST' });
+          if (!res.ok) return;
           window.location.reload();
         },
+        confirmDeleteRule: null,
       };
     }
   </script>

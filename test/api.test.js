@@ -614,3 +614,101 @@ test('special_day_types/dates/assignments CRUD happy path, and the special day i
     await ctx.close();
   }
 });
+
+// P1a — documents that scope-omission is NOT a failure mode (closes the "silent
+// failure" red herring investigated before this batch of fixes): assertInDomain
+// skips validation on undefined, so /api/teach without an explicit `scope` must
+// succeed and persist with the column's DEFAULT 'household'.
+test('teach without explicit scope succeeds and persists scope=household by default', async () => {
+  const ctx = await startServer();
+  try {
+    const dishItem = ctx.db.prepare('SELECT id FROM dish_items LIMIT 1').get();
+    const res = await fetch(`${ctx.base}/api/teach`, {
+      method: 'POST',
+      headers: pk(),
+      body: JSON.stringify({
+        table: 'dish_repeat_rules',
+        dish_item_id: dishItem.id,
+        min_gap_days: 14,
+        severity: 'soft',
+        rationale_tag: 'dislike',
+        note: 'no scope field on purpose',
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    const persisted = ctx.db.prepare('SELECT * FROM dish_repeat_rules WHERE id = ?').get(body.id);
+    assert.equal(persisted.scope, 'household');
+  } finally {
+    await ctx.close();
+  }
+});
+
+// P1a — a deliberately invalid /api/teach payload (missing a required field) must
+// return non-200 so the UI's error banner has something real to surface instead of
+// silently proceeding as if the write succeeded.
+test('teach with a missing required field returns a non-200 error, not a silent success', async () => {
+  const ctx = await startServer();
+  try {
+    const res = await fetch(`${ctx.base}/api/teach`, {
+      method: 'POST',
+      headers: pk(),
+      body: JSON.stringify({
+        table: 'dish_repeat_rules',
+        // dish_item_id / min_gap_days / severity all omitted — required fields missing.
+        rationale_tag: 'dislike',
+      }),
+    });
+    assert.notEqual(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.error);
+  } finally {
+    await ctx.close();
+  }
+});
+
+// P1b — a seeded dish_repeat_rules row (dish_repeat_rules/ingredient_family_rules
+// have no `origin` column at all, unlike dish_items/dish_families/ingredients) must
+// be freely editable, and the edit must survive a full reseed since seed() never
+// touches rule tables (only dish_items/dish_families/ingredients).
+test('edited seeded dish_repeat_rules row survives a full reseed untouched', async () => {
+  const ctx = await startServer();
+  try {
+    const seededRule = ctx.db.prepare("SELECT * FROM dish_repeat_rules WHERE updated_by = 'seed' LIMIT 1").get();
+    assert.ok(seededRule, 'expected at least one seed-origin dish_repeat_rules row');
+
+    const putRes = await fetch(`${ctx.base}/api/rules/dish_repeat/${seededRule.id}`, {
+      method: 'PUT',
+      headers: pk(),
+      body: JSON.stringify({ ...seededRule, min_gap_days: 999 }),
+    });
+    assert.equal(putRes.status, 200);
+
+    const { migrate } = require('../src/db/migrate');
+    const { seed } = require('../seed/load');
+    migrate(ctx.db);
+    seed(ctx.db);
+
+    const afterReseed = ctx.db.prepare('SELECT * FROM dish_repeat_rules WHERE id = ?').get(seededRule.id);
+    assert.equal(afterReseed.min_gap_days, 999);
+  } finally {
+    await ctx.close();
+  }
+});
+
+// P1b — the Knowledge UI now offers a Delete action per rule row (route-level
+// coverage: the DELETE route itself, already generic via createResourceRouter,
+// works against a seed-origin rule with no origin-based block).
+test('DELETE /api/rules/dish_repeat/:id works against a seed-origin rule (no origin block exists)', async () => {
+  const ctx = await startServer();
+  try {
+    const seededRule = ctx.db.prepare("SELECT * FROM dish_repeat_rules WHERE updated_by = 'seed' LIMIT 1").get();
+    assert.ok(seededRule);
+    const delRes = await fetch(`${ctx.base}/api/rules/dish_repeat/${seededRule.id}`, { method: 'DELETE', headers: pk() });
+    assert.equal(delRes.status, 204);
+    const gone = ctx.db.prepare('SELECT * FROM dish_repeat_rules WHERE id = ?').get(seededRule.id);
+    assert.equal(gone, undefined);
+  } finally {
+    await ctx.close();
+  }
+});

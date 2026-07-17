@@ -327,6 +327,40 @@ test('Variety rice chosen hides gravy/kari/salad/thogayal rows and clears their 
   }
 });
 
+// P2c — data-layer capability the collapse confirm sheet needs: naming which
+// dishes a variety-rice choice would clear, before the destructive call fires.
+test('GET /api/wizard/collapse-preview lists the named dishes that clear-collapsed would remove', async () => {
+  const ctx = await startServer();
+  try {
+    const emptyRes = await fetch(`${ctx.base}/api/wizard/collapse-preview?date=2026-07-20&slot=morning`, { headers: jsonHeaders() });
+    assert.equal(emptyRes.status, 200);
+    assert.deepEqual((await emptyRes.json()).dishes, []);
+
+    const kari = ctx.db.prepare("SELECT id, name_en FROM dish_items WHERE meal_role = 'dry_side' LIMIT 1").get();
+    await fetch(`${ctx.base}/api/wizard/choose`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ date: '2026-07-20', slot: 'morning', rowSlug: 'dry_side', dishItemId: kari.id }),
+    });
+
+    const previewRes = await fetch(`${ctx.base}/api/wizard/collapse-preview?date=2026-07-20&slot=morning`, { headers: jsonHeaders() });
+    const preview = await previewRes.json();
+    assert.ok(preview.dishes.some((d) => d.name === kari.name_en));
+
+    // Confirms data/wizard.js's dishesClearedByCollapse matches clear-collapsed's
+    // own hidden-rows logic: after clearing, the preview is empty again.
+    await fetch(`${ctx.base}/api/wizard/clear-collapsed`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ date: '2026-07-20', slot: 'morning' }),
+    });
+    const afterRes = await fetch(`${ctx.base}/api/wizard/collapse-preview?date=2026-07-20&slot=morning`, { headers: jsonHeaders() });
+    assert.deepEqual((await afterRes.json()).dishes, []);
+  } finally {
+    await ctx.close();
+  }
+});
+
 test('Noon Side/Gravy row lists morning carry-over first when a morning gravy is planned, absent otherwise', async () => {
   const ctx = await startServer();
   try {
@@ -384,6 +418,66 @@ test('regression: /api/suggest findings never contain a zero-leads entry, and co
     for (const s of data.suggestions) {
       assert.ok(!s.findings.some((f) => f.step === 'meal_composition' && /No sambar/.test(f.message || '')));
     }
+  } finally {
+    await ctx.close();
+  }
+});
+
+// P2a — single-child drill collapse: a class with exactly one family (verified
+// against seed data — Rasam and Thogayal each have exactly one family; Sambar has
+// two: Regular Sambar / Arachuvitta Sambar Pitlai) should render that family's
+// items directly on the role-level page rather than a link to a separate family
+// screen. Sambar must still show its two-family choice.
+test('Rasam row (single-family class) renders its items inline, no family-link screen', async () => {
+  const ctx = await startServer();
+  try {
+    const res = await fetch(`${ctx.base}/plan/2026-07-20/morning/secondary_gravy`);
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    const rasamItems = ctx.db
+      .prepare(
+        `SELECT di.name_en FROM dish_items di JOIN dish_families df ON df.id = di.family_id
+         WHERE df.name_en = 'Rasam Family'`
+      )
+      .all();
+    assert.ok(rasamItems.length > 1);
+    for (const item of rasamItems) assert.ok(html.includes(item.name_en), `expected ${item.name_en} inline`);
+    // No link to a separate family drill page for the (single) Rasam family.
+    assert.ok(!/href="\/plan\/2026-07-20\/morning\/secondary_gravy\/\d+"/.test(html));
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('Thogayal row (single-family class) renders its items inline, no family-link screen', async () => {
+  const ctx = await startServer();
+  try {
+    const res = await fetch(`${ctx.base}/plan/2026-07-20/morning/condiment__thogayal`);
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    const items = ctx.db
+      .prepare(
+        `SELECT di.name_en FROM dish_items di JOIN dish_families df ON df.id = di.family_id
+         WHERE df.name_en = 'Thogayal Family'`
+      )
+      .all();
+    assert.ok(items.length >= 1);
+    for (const item of items) assert.ok(html.includes(item.name_en));
+    assert.ok(!/href="\/plan\/2026-07-20\/morning\/condiment__thogayal\/\d+"/.test(html));
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('Sambar row (two families) still shows its family-choice screen, not collapsed', async () => {
+  const ctx = await startServer();
+  try {
+    const res = await fetch(`${ctx.base}/plan/2026-07-20/morning/main_gravy`);
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.ok(html.includes('Regular Sambar'));
+    assert.ok(html.includes('Arachuvitta Sambar Pitlai'));
+    assert.ok(/href="\/plan\/2026-07-20\/morning\/main_gravy\/\d+"/.test(html), 'expected links to the family drill level');
   } finally {
     await ctx.close();
   }

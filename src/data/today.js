@@ -8,7 +8,7 @@ function slotMenu(db, date, slot) {
 
   const actual = db
     .prepare(
-      `SELECT di.id, di.name_en FROM actual_meals am JOIN dish_items di ON di.id = am.dish_item_id
+      `SELECT di.id, di.name_en, am.id AS row_id FROM actual_meals am JOIN dish_items di ON di.id = am.dish_item_id
        WHERE am.date = ? AND am.slot = ? ORDER BY am.ordering`
     )
     .all(date, slot);
@@ -16,7 +16,7 @@ function slotMenu(db, date, slot) {
 
   const planned = db
     .prepare(
-      `SELECT di.id, di.name_en FROM plans p JOIN dish_items di ON di.id = p.dish_item_id
+      `SELECT di.id, di.name_en, p.id AS row_id FROM plans p JOIN dish_items di ON di.id = p.dish_item_id
        WHERE p.date = ? AND p.slot = ? ORDER BY p.ordering`
     )
     .all(date, slot);

@@ -153,6 +153,25 @@ function getHubData(db, { date, slot }) {
   return { date, slot, rows, compositionWarning, note: pattern.note || null };
 }
 
+// P2c — data-layer capability the collapse confirm sheet needs: which named
+// dishes are currently planned in rows a collapses_pattern choice (variety rice)
+// would hide, so the confirm sheet can list them by name before the destructive
+// clear-collapsed call fires. Mirrors the hidden-rows logic in
+// POST /api/wizard/clear-collapsed (src/routes/wizard.js) but read-only.
+function dishesClearedByCollapse(db, { date, slot }) {
+  const pattern = getSlotPattern(db, slot);
+  const collapseRow = pattern.rows.find((r) => r.collapses_pattern);
+  if (!collapseRow) return [];
+  const allowed = new Set(collapseRow.collapsed_allows || []);
+  const hiddenRows = pattern.rows.filter((r) => r !== collapseRow && !allowed.has(r.role));
+  const dishes = [];
+  for (const r of hiddenRows) {
+    const chosen = chosenForRole(db, { date, slot, role: r.role, filterClass: r.filter_class });
+    for (const c of chosen) dishes.push({ planId: c.plan_id, name: c.name_en, rowLabel: r.label });
+  }
+  return dishes;
+}
+
 // A stable, URL-safe identifier for a hub row — role alone collides when two rows
 // share a meal_role but differ by filter_class (Thogayal vs Pachadi, both
 // role:"condiment"), so the slug folds filter_class in. Computed from data, never
@@ -178,4 +197,5 @@ module.exports = {
   morningGravyCarryover,
   chosenForRole,
   getHubData,
+  dishesClearedByCollapse,
 };

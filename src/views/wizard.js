@@ -21,12 +21,23 @@ function chipLabelFor(status) {
 function rowHtml(date, slot, row) {
   const slug = rowSlug(row);
   const count = row.chosen.length;
-  const names = row.chosen.map((c) => escapeHtml(c.name_en)).join(', ');
+  // P2e — each already-chosen dish gets its own "Remove" action, distinct from
+  // re-drilling via Edit, so removing one dish doesn't require re-entering the
+  // guided flow from the top. Deletes the single `plans` row via the existing
+  // generic DELETE /api/plans/:id route (src/routes/plans.js).
+  const chosenHtml = row.chosen
+    .map(
+      (c) => `<span class="chip chip--allowed" style="margin-right: var(--space-1);">
+      ${escapeHtml(c.name_en)}
+      <button class="btn" style="padding: 0 var(--space-1); margin-left: var(--space-1);" @click="removePlan(${c.plan_id})" title="Remove ${escapeHtml(c.name_en)}">✕</button>
+    </span>`
+    )
+    .join('');
   return `
   <div class="dish-card" style="justify-content: space-between;">
     <div style="flex:1;">
       <div class="dish-card__name">${escapeHtml(row.label)}</div>
-      ${count ? `<div class="dish-card__family">${names} ✎</div>` : ''}
+      ${count ? `<div class="dish-card__family">${chosenHtml}</div>` : ''}
     </div>
     <a class="btn" href="/plan/${date}/${slot}/${slug}" data-role="${escapeHtml(row.role)}">
       ${count >= row.max ? 'Edit' : (row.max > 1 ? `+ (${count}/${row.max})` : '+')}
@@ -68,12 +79,30 @@ function renderWizardHub(hub) {
   </div>
   <script src="/alpine.min.js" defer></script>
   <script>
-    function wizardHub() { return {}; }
+    function wizardHub() {
+      return {
+        async removePlan(planId) {
+          const res = await kpFetch('/api/plans/' + planId, { method: 'DELETE' });
+          if (!res.ok) return;
+          window.location.reload();
+        },
+      };
+    }
   </script>`;
   return pageShell({ title: 'Guided plan', activeTab: 'plan', bodyHtml: body });
 }
 
 function familyGroupHtml(date, slot, rowSlugValue, group) {
+  // P2a — single-child collapse: the class has exactly one family, so render its
+  // items directly here (leafItemHtml, same markup as the item-choice level) rather
+  // than a link into a separate family/item screen.
+  if (group.inlineItems) {
+    return `
+    <div style="margin-bottom: var(--space-3);">
+      <div class="suggestion-group__header">${escapeHtml(group.name)}</div>
+      ${group.inlineItems.map((i) => leafItemHtml(date, slot, rowSlugValue, i, false)).join('\n')}
+    </div>`;
+  }
   const famsHtml = group.families
     .map((fam) => {
       if (fam.deadEndItemId) {
@@ -124,18 +153,50 @@ function renderWizardRole({ date, slot, row, rowSlug: slug, groups, carryover, c
     <p ${groups.length ? '' : ''}>${groups.length === 0 && (!carryover || carryover.length === 0) ? 'No options for this row.' : ''}</p>
     <button class="btn" style="width:100%;" @click="skip()">Skip</button>
     <a class="btn" style="width:100%; display:block; text-align:center; margin-top: var(--space-2);" href="/plan/${date}/${slot}">Back</a>
+
+    <template x-if="collapseConfirm">
+      <div class="sheet-backdrop" @click.self="collapseConfirm = null">
+        <div class="sheet sheet--static">
+          <h2>Choosing this will clear:</h2>
+          <template x-for="d in collapseConfirm.dishes" :key="d.planId">
+            <p><strong x-text="d.rowLabel"></strong>: <span x-text="d.name"></span></p>
+          </template>
+          <button class="btn btn-primary" style="display:block; width:100%; margin-bottom: var(--space-2);" @click="confirmChoose()">Continue</button>
+          <button class="btn" style="width:100%;" @click="collapseConfirm = null">Cancel</button>
+        </div>
+      </div>
+    </template>
   </div>
   <script src="/alpine.min.js" defer></script>
   <script>
     function wizardRole() {
       return {
+        collapseConfirm: null,
         async choose(dishItemId) {
-          await fetch('/api/wizard/choose', {
+          ${row.collapses_pattern
+            ? `const previewRes = await kpFetch('/api/wizard/collapse-preview?date=${date}&slot=${slot}');
+          if (!previewRes.ok) return;
+          const preview = await previewRes.json();
+          if (preview.dishes.length > 0) {
+            this.collapseConfirm = { dishItemId, dishes: preview.dishes };
+            return;
+          }
+          await this.doChoose(dishItemId);`
+            : `await this.doChoose(dishItemId);`}
+        },
+        async confirmChoose() {
+          const dishItemId = this.collapseConfirm.dishItemId;
+          this.collapseConfirm = null;
+          await this.doChoose(dishItemId);
+        },
+        async doChoose(dishItemId) {
+          const res = await kpFetch('/api/wizard/choose', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ date: ${JSON.stringify(date)}, slot: ${JSON.stringify(slot)}, rowSlug: ${JSON.stringify(slug)}, dishItemId }),
           });
-          ${row.collapses_pattern ? `await fetch('/api/wizard/clear-collapsed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: ${JSON.stringify(date)}, slot: ${JSON.stringify(slot)} }) });` : ''}
+          if (!res.ok) return;
+          ${row.collapses_pattern ? `const res2 = await kpFetch('/api/wizard/clear-collapsed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: ${JSON.stringify(date)}, slot: ${JSON.stringify(slot)} }) }); if (!res2.ok) return;` : ''}
           window.location.href = '/plan/${date}/${slot}';
         },
         skip() {
@@ -147,7 +208,7 @@ function renderWizardRole({ date, slot, row, rowSlug: slug, groups, carryover, c
   return pageShell({ title: row.label, activeTab: 'plan', bodyHtml: body });
 }
 
-function leafItemHtml(date, slot, rowSlugValue, item) {
+function leafItemHtml(date, slot, rowSlugValue, item, allowReject = true) {
   const disabled = item.status === 'blocked';
   return `
   <div class="dish-card">
@@ -159,7 +220,7 @@ function leafItemHtml(date, slot, rowSlugValue, item) {
     ${disabled
       ? `<button class="btn" disabled>Choose</button>`
       : `<button class="btn btn-primary" @click="choose(${item.dishItemId})">Choose</button>
-         <button class="btn" @click="reject(${item.dishItemId}, ${JSON.stringify(item.dishName)})" title="Not this dish — remember?">✕</button>`}
+         ${allowReject ? `<button class="btn" @click="reject(${item.dishItemId}, ${JSON.stringify(item.dishName)})" title="Not this dish — remember?">✕</button>` : ''}`}
   </div>`;
 }
 
@@ -171,6 +232,19 @@ function renderWizardItems({ date, slot, row, rowSlug: slug, familyId, familyNam
     ${items.map((i) => leafItemHtml(date, slot, slug, i)).join('\n')}
     <button class="btn" style="width:100%;" @click="skip()">Skip</button>
     <a class="btn" style="width:100%; display:block; text-align:center; margin-top: var(--space-2);" href="/plan/${date}/${slot}/${slug}">Back</a>
+
+    <template x-if="collapseConfirm">
+      <div class="sheet-backdrop" @click.self="collapseConfirm = null">
+        <div class="sheet sheet--static">
+          <h2>Choosing this will clear:</h2>
+          <template x-for="d in collapseConfirm.dishes" :key="d.planId">
+            <p><strong x-text="d.rowLabel"></strong>: <span x-text="d.name"></span></p>
+          </template>
+          <button class="btn btn-primary" style="display:block; width:100%; margin-bottom: var(--space-2);" @click="confirmChoose()">Continue</button>
+          <button class="btn" style="width:100%;" @click="collapseConfirm = null">Cancel</button>
+        </div>
+      </div>
+    </template>
 
     <template x-if="rejectDish">
       <div class="sheet-backdrop" @click.self="rejectDish = null">
@@ -200,12 +274,31 @@ function renderWizardItems({ date, slot, row, rowSlug: slug, familyId, familyNam
         rejectDish: null,
         rejectPrimaryIngredients: [],
         rejectIngredientsLoading: false,
+        collapseConfirm: null,
         async choose(dishItemId) {
-          await fetch('/api/wizard/choose', {
+          ${row.collapses_pattern
+            ? `const previewRes = await kpFetch('/api/wizard/collapse-preview?date=${date}&slot=${slot}');
+          if (!previewRes.ok) return;
+          const preview = await previewRes.json();
+          if (preview.dishes.length > 0) {
+            this.collapseConfirm = { dishItemId, dishes: preview.dishes };
+            return;
+          }
+          await this.doChoose(dishItemId);`
+            : `await this.doChoose(dishItemId);`}
+        },
+        async confirmChoose() {
+          const dishItemId = this.collapseConfirm.dishItemId;
+          this.collapseConfirm = null;
+          await this.doChoose(dishItemId);
+        },
+        async doChoose(dishItemId) {
+          const res = await kpFetch('/api/wizard/choose', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ date: ${JSON.stringify(date)}, slot: ${JSON.stringify(slot)}, rowSlug: ${JSON.stringify(slug)}, dishItemId }),
           });
+          if (!res.ok) return;
           window.location.href = '/plan/${date}/${slot}';
         },
         skip() {
@@ -214,15 +307,17 @@ function renderWizardItems({ date, slot, row, rowSlug: slug, familyId, familyNam
         async reject(dishItemId, name) {
           this.rejectDish = { id: dishItemId, name };
           this.rejectIngredientsLoading = true;
-          const res = await fetch('/api/items/' + dishItemId + '/ingredients');
+          const res = await kpFetch('/api/items/' + dishItemId + '/ingredients');
+          if (!res.ok) { this.rejectIngredientsLoading = false; this.rejectDish = null; return; }
           const rows = await res.json();
           this.rejectPrimaryIngredients = rows.filter((r) => r.role === 'primary');
           this.rejectIngredientsLoading = false;
         },
         async teachIngredientAvoid(ing) {
-          const dishRes = await fetch('/api/items/' + this.rejectDish.id);
+          const dishRes = await kpFetch('/api/items/' + this.rejectDish.id);
+          if (!dishRes.ok) return;
           const dish = await dishRes.json();
-          await fetch('/api/teach', {
+          const res = await kpFetch('/api/teach', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -234,10 +329,11 @@ function renderWizardItems({ date, slot, row, rowSlug: slug, familyId, familyNam
               note: 'Rejected from Guided plan drill.',
             }),
           });
+          if (!res.ok) return;
           this.rejectDish = null;
         },
         async teachDishCooldown() {
-          await fetch('/api/teach', {
+          const res = await kpFetch('/api/teach', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -249,6 +345,7 @@ function renderWizardItems({ date, slot, row, rowSlug: slug, familyId, familyNam
               note: 'Rejected from Guided plan drill.',
             }),
           });
+          if (!res.ok) return;
           this.rejectDish = null;
         },
       };

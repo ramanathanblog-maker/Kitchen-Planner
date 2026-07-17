@@ -218,6 +218,20 @@ main {
   margin-bottom: var(--space-3);
 }
 
+/* ---------- Error banner (P1a: mutating fetch() failures must be visible, not silent) ---------- */
+.error-banner {
+  background: var(--blocked-tint);
+  color: var(--blocked);
+  font-size: var(--fs-chip);
+  font-weight: 600;
+  border-radius: var(--radius-card);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
 /* ---------- Slot header ---------- */
 .slot-header {
   display: flex;
@@ -264,8 +278,22 @@ main {
   color: var(--info);
   text-decoration: none;
   min-height: 44px;
+  border-top: 3px solid transparent;
+  transition: none;
 }
-.tab-bar__item.is-active { color: var(--accent); font-weight: 600; }
+/* P3 — font-weight alone doesn't read as "selected" at a glance on a 375px
+   screen (RP/PS are phone-only daily users). Layer on an accent top border
+   (mirrors the slot-header underline convention) plus an accent-tinted pill
+   background behind the label, both using existing A5 tokens — no new hues. */
+.tab-bar__item.is-active {
+  color: var(--accent);
+  font-weight: 600;
+  border-top-color: var(--accent);
+  background: var(--accent-tint);
+}
+@media (prefers-color-scheme: dark) {
+  .tab-bar__item.is-active { background: rgb(63 98 18 / 25%); }
+}
 
 /* ---------- Bottom sheet ---------- */
 .sheet-backdrop {

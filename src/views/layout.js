@@ -19,6 +19,7 @@ ${kiosk ? kioskThemeInitScript() : ''}
 </head>
 <body${kiosk ? ' class="kiosk"' : ''}>
 ${requireEditor ? editorGuardScript() : ''}
+<div id="kp-error-banner" class="error-banner" style="display:none;" role="alert" aria-live="assertive"></div>
 <main>
 ${kiosk ? themeToggleButton() : ''}
 ${bodyHtml}
@@ -27,6 +28,7 @@ ${activeTab ? tabBar(activeTab) : ''}
 <script>
   if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js'); }
 </script>
+${errorBannerScript()}
 </body>
 </html>`;
 }
@@ -68,6 +70,47 @@ function themeToggleButton() {
     <span aria-hidden="true" class="theme-toggle__icon">&#9788;</span>
     <span aria-hidden="true" class="theme-toggle__icon">&#9790;</span>
   </button>`;
+}
+
+// P1a — a small reusable error-surfacing mechanism shared by every page. Mutating
+// fetch() calls across the app were proceeding as if a 4xx/5xx response was a
+// success (see DECISIONS.md). window.kpShowError() renders the message in the
+// sticky #kp-error-banner div above; window.kpFetch() wraps fetch() and shows the
+// banner automatically on any non-ok response, returning {ok, status, body} so
+// call sites can branch without duplicating res.ok checks.
+function errorBannerScript() {
+  return `<script>
+  function kpShowError(message) {
+    var el = document.getElementById('kp-error-banner');
+    if (!el) return;
+    el.textContent = message || 'Something went wrong.';
+    el.style.display = 'block';
+  }
+  function kpClearError() {
+    var el = document.getElementById('kp-error-banner');
+    if (!el) return;
+    el.style.display = 'none';
+    el.textContent = '';
+  }
+  async function kpFetch(url, opts) {
+    let res;
+    try {
+      res = await fetch(url, opts);
+    } catch (e) {
+      kpShowError('Network error — please check your connection and try again.');
+      throw e;
+    }
+    if (!res.ok) {
+      let message = 'Request failed (' + res.status + ').';
+      try {
+        const body = await res.clone().json();
+        if (body && body.error) message = body.error;
+      } catch (e) { /* non-JSON error body */ }
+      kpShowError(message);
+    }
+    return res;
+  }
+</script>`;
 }
 
 function tabBar(activeTab) {
