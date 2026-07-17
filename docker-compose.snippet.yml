@@ -1,0 +1,12 @@
+# Block for PK to merge into ~/homelab/docker-compose.yml.
+# Port 3010 is reserved for this app — 3000 and 5433 are taken by NeoTrack dev on the same host.
+  kitchen-planner:
+    build: ./kitchen-planner
+    container_name: kitchen-planner
+    restart: unless-stopped
+    ports:
+      - "${KITCHEN_PORT:-3010}:3010"
+    volumes:
+      - ./kitchen-planner/data:/app/data
+    environment:
+      - NODE_ENV=production

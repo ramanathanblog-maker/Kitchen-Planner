@@ -1,0 +1,121 @@
+# DECISIONS.md
+
+v1.0 — 2026-07-16
+
+Running log of choices made when a spec detail was unspecified. Newest entries at the bottom. Each entry: phase, decision, rationale.
+
+---
+
+**Phase 1 — JSON gap: Murungakkai under Vathakozhambu**
+`meal-planner-taxonomy-design.md` states Vathakozhambu "includes ... Murungakkai as an added member," but `taxonomy-comprehensive.json`'s `vathakozambu` entry has no `ingredients` list at all. Per A1 the JSON wins and is never hand-edited to add items absent from it. Not seeded. Flagged here for PK to add Murungakkai to the canonical JSON if correct.
+
+**Phase 1 — dish_families vs dish_items for JSON entries with no sub-items**
+Classes like `vathakozambu`, `kozhambu`, `rasam` have no `ingredients`/`variants`/`variations` list in the JSON — only `status`. Seeded as a `dish_families` row with no child `dish_items` (family itself is plannable). Classes with an `ingredients` list (koottu, kari, roast_kari, thuruval, thogayal) get one `dish_items` row per ingredient value, `role` on the ingredient link inferred as `primary` (JSON doesn't distinguish primary/support per item; matches spec's Avarai/Onion/Sundaikkai-as-primary-in-Sambar example loosely — flagged, not a hard fact from the JSON). Classes with `variants`/`variations` (usili, pachadi, variety_rice, koottu's aviyal/porichakootu) get one `dish_items` row per variant name instead of per ingredient.
+
+**Phase 1 — dish_item_ingredients.role default**
+JSON does not encode primary/support role per ingredient-in-class link. Defaulted every seeded `dish_item_ingredients` row to `role='primary'` since the JSON gives no basis to mark anything support-only. This is the "support-role repetition assumption" flagged for PK per appendix item 5 — engine-level support-role logic (Phase 2) should treat this as unconfirmed.
+
+**Phase 1 — sides_gravy and childrens_snacks item modeling**
+Both classes have an `items` list (not `ingredients`/`variants`). Modeled the same way as variant lists: one `dish_items` row per item name under a `dish_families` row for the class, no `dish_item_ingredients` rows (JSON gives no ingredient composition for these).
+
+**Phase 1 — tiffin sub-family nesting**
+Each of the 13 tiffin sub-families (dosai, oothappam, ...) seeded as a `dish_families` row with `parent_id` pointing at a top-level `tiffin` family row, and each item in its list seeded as a `dish_items` row under that sub-family. The JSON's `tiffin.tags: ["onion_flag","garlic_flag"]` only declares that these flags are relevant fields for the tiffin class — it does not say which specific items actually contain onion or garlic (e.g. plain dosai clearly has neither). Defaulting every tiffin item's `onion_flag`/`garlic_flag` to true would be inventing data that could wrongly block plain items on an observance day; defaulted both to **false** (0) for every seeded tiffin item instead, and flagged here — per-item correction is a manual edit for PK, not something to guess.
+
+---
+
+**Phase 2 — special_day_dates table + restricts_onion/restricts_garlic columns (migration 002)**
+Phase 1's `special_day_assignments` CHECK requires a `family_id` or `dish_item_id` on every row, so it cannot express "2026-08-01 is amavasai" by itself — only per-dish/family overrides for a date already known to be special. The taxonomy design doc (`meal-planner-taxonomy-design.md` §Observance) is explicit that amavasai/tharpanam-type days broadly restrict onion/garlic dishes, not just a hand-picked list — spec step 2's own wording ("consumes onion/garlic flags... for that date") only makes sense with a date→type mapping to consume. Added `special_day_dates` (date, special_day_type_id) as that mapping, and `restricts_onion`/`restricts_garlic` booleans on `special_day_types` so the engine can generically block onion/garlic-flagged dishes on a day of that type without PK enumerating every such dish as an assignment row. No rows are seeded by this migration — special_day_types/dates remain empty until PK creates them via the Phase 3/4 admin UI.
+
+**Phase 2 — onion/garlic observance restriction severity: block, not warn**
+No source doc states whether onion/garlic-on-restricted-day is a hard rule or a soft nudge. Treated as `block` (same tier as an ingredient `never` verdict) since these are religious/observance restrictions, not taste preferences — flagged here for PK to confirm, same spirit as the onion-sambar severity placeholder (appendix #4).
+
+**Phase 2 — ingredient+form repetition defaults (3-day/14-day) treated as `warn`, never `block`**
+`dish_repeat_rules` rows carry an explicit `severity` (hard/soft) chosen by PK per dish. The generic ingredient+form defaults from `rules.vegetable_repetition` in the JSON carry no severity field at all. Treated every ingredient+form default violation as `warn` (soft), reserving `block` for explicit dish-specific `hard` rules and observance/allergy/`never` cases — flagged for PK confirmation if a harder default is wanted.
+
+**Phase 2 — gap-days boundary semantics: `min_gap_days` is inclusive (gap >= min is compliant)**
+"No form repeats within 3 days" read as: the next occurrence is fine once at least 3 full days have elapsed, i.e. `gap < min_gap_days` violates, `gap >= min_gap_days` is compliant (day-3 gap is allowed, not day-4). Chosen for consistency with how `min_gap_days` reads as a literal minimum. Flagged as an assumption, not confirmed by PK.
+
+**Phase 2 — heaviness step compares dishes within the same date+slot, not the whole day**
+Spec says "heavy+heavy same day ⇒ warn" but v1 supports multi-dish slots (e.g. morning rice course = kuzhambu+kari+kootu together) as the unit a household actually eats together; scoped the check to the same date+slot (the dishes actually eaten together) rather than across morning+noon+night, which would rarely both be "heavy" in a way that matters to a single meal's balance.
+
+**Phase 2 — "leftovers first" flag has no storage table yet**
+Phase 1's schema has no column for the shopping view's "use up leftovers first" checkbox (Phase 4 concern) — v1 keeps no stock ledger, and this flag's persistence wasn't specified in Phase 1. The availability engine step accepts an optional `leftoverIngredientIds` set as a context input rather than querying a table; Phase 3's API/shopping route will decide where that set is persisted (flagged for that phase, not invented here).
+
+---
+
+**Phase 1b Amendment — migration numbered 003, not 002**
+The amendment doc names the new migration `002_taxonomy_v14.sql`, but `002_special_day_flags.sql` was already applied during Phase 2. Migrations are append-only and never renumbered (CLAUDE.md A3.4), so this ships as `003_taxonomy_v14.sql` instead.
+
+**Phase 1b Amendment — ingredients table rebuilt under a temporary name, not via RENAME**
+Widening `ingredients.category`'s CHECK requires a full table rebuild (SQLite can't ALTER a CHECK in place). The amendment's implied approach (rename old table out of the way, create new, copy, drop old) breaks silently: SQLite's `ALTER TABLE ... RENAME TO` rewrites `REFERENCES` clauses in dependent tables (`dish_item_ingredients`, `ingredient_family_rules`) to follow the renamed table, so after the old table is dropped those children are left referencing a nonexistent `ingredients_old`. Built the replacement as `ingredients_v14`, copied data in, dropped the original `ingredients`, then renamed `ingredients_v14` → `ingredients` — the rename target here was never the table other tables reference, so no REFERENCES rewrite occurs and existing FK clauses (which already say `REFERENCES ingredients(id)`) resolve correctly once the name lands back on `ingredients`.
+
+**Phase 1b Amendment — old category value `dal_pulse` maps to `pulse`**
+The v1.3 CHECK vocabulary had `dal_pulse`; v1.4 splits it into `dal` and `pulse`. No existing ingredient rows had accumulated real data at the time of this migration (pre-launch), but the migration's CASE mapping picks `pulse` as the safe default for any `dal_pulse` row encountered, since the JSON's own pulses (toor dal, moong dal, etc.) mostly map there.
+
+**Phase 1b Amendment — reused existing `aliases`/`allergy_flag` columns rather than adding duplicates**
+The amendment's migration step 2 says "add ingredient columns: aliases, allergy_sensitive" — but Phase 1 already added `aliases TEXT` and `allergy_flag INTEGER` to `ingredients`. Kept the existing column names (`allergy_flag`, not `allergy_sensitive`) rather than adding parallel duplicate columns; the seed loader maps the JSON's `allergy_sensitive` boolean onto the existing `allergy_flag` column.
+
+**Phase 1b Amendment — stale pre-v1.4 seed-origin rows are deleted on reseed, not merged**
+The amendment states this is "a structural rewrite, not a data refresh" — item/family names changed wholesale (e.g. `vathakozambu` stopped being a top-level class) and the old seed rows have no `external_id` to match against the new JSON. `seed()` now deletes any `origin='seed'` row with `external_id IS NULL` (in FK-safe order: links → dependent rule rows → the row itself) before loading v1.4, leaving `origin='user'` rows untouched. This is safe pre-launch (no real household data has accumulated); flagged here in case a later structural rewrite needs a gentler migration path.
+
+**Phase 1b Amendment — dish_compatibility_rules needed no schema change for family-level source/target**
+The amendment worried the mor-kuzhambu→adai compatibility rule (now family→subfamily, not item→item) might be a schema gap requiring a STOP. `dish_compatibility_rules` already carries `source_family_id`/`target_family_id` columns alongside the item-id columns (added in Phase 2, general-purpose from the start) — no schema change needed. The rule now points `source_family_id` at the Kozhambu class's `morkuzhambu` family row and `target_family_id` at the Tiffin class's `adai` subfamily row (subfamilies are themselves `dish_families` rows with `parent_id` pointing at their parent family).
+
+**Phase 1b Amendment — meal_composition step (5b) scope**
+`context.mealComposition.siblings` only reads `plans` (not `actual_meals`) for the same date+slot, since the "exactly one lead" rule is about what's being planned, not a historical audit. Severities are read from `settings.meal_composition_zero_leads_severity`/`multiple_leads_severity` at evaluation time — never hard-coded — so an admin can promote either to `block` later without an engine code change (Phase 4 UI hook, not built yet).
+
+---
+
+**Phase 3 — migration 004: version/updated_by added to ingredients, dish_families, dish_items**
+The GATE requires optimistic-concurrency version checks on "ingredients, families, items, and all three rule tables," but only the three rule tables had a `version` column (added in Phase 1 for exactly this purpose). Added `version INTEGER NOT NULL DEFAULT 1` and `updated_by TEXT` to the three taxonomy tables so all six writeable tables behave uniformly through the same generic resource router.
+
+**Phase 3 — leftover_flag lands on `ingredients`, not a separate table**
+DECISIONS.md's Phase 2 entry deferred "leftovers first" persistence to whichever phase actually needed it. `GET /api/shopping` is that phase. Rather than a separate `leftover_flags` table, added `ingredients.leftover_flag INTEGER` — the flag is a property of the ingredient ("we have extra X"), toggled through the existing ingredients PUT endpoint, no new route needed. `src/engine/steps/availability.js`'s `leftoverIngredientIds` context input (still populated by callers, not by this column directly) is unchanged; Phase 4's UI can decide whether to source it from this column.
+
+**Phase 3 — PUT /api/teach has no version check, unlike the full CRUD PUT**
+The spec calls `/api/teach` a "one-tap rule write." Requiring the caller to first GET the row, read its version, then POST would defeat the "one tap" framing the spec itself uses. `/api/teach` blindly updates by `id` when given; the full versioned CRUD routes under `/api/rules/*` remain available for a reviewer who wants the conflict-safe path. Flagged here since it's a deliberate inconsistency with the rest of the API, not an oversight.
+
+**Phase 3 — GET /api/shopping "week" is the full range, not the range minus tomorrow**
+"Tomorrow view + 7-day view" read as two overlapping lenses on the same planned range (a quick glance vs. the full week), not a disjoint partition — so `week` always includes whatever `tomorrow` shows. Flagged as an assumption since the spec doesn't state this explicitly.
+
+**Phase 3 — undo semantics for create/delete/update events**
+`knowledge_events` doesn't distinguish create/update/delete explicitly — inferred from `old_value`/`new_value` nullness (create: old null; delete: new null; update: both present). Undo of a create deletes the row; undo of a delete re-inserts it verbatim (including its original `id`, since AUTOINCREMENT permits explicit-id inserts as long as that id is free); undo of an update writes the old field values back. All three log a new `manual_edit` event (the schema's `source` CHECK has no `undo` value) rather than deleting the original — per CLAUDE.md A3.5's append-only audit requirement.
+
+**Phase 3 — kill-test technique for POST /api/teach's atomicity**
+Rather than adding a test-only "force error" flag to production code (a backdoor a real client could theoretically trigger by accident), the kill test monkey-patches `db.prepare` on the test's own db instance to throw only for the `knowledge_events` INSERT, calls the real (unmodified) route handler, and restores `db.prepare` afterward. Verifies neither the rule row nor the event row exists post-failure — proof the whole `db.transaction()` rolled back, not just partial cleanup.
+
+---
+
+**Phase 3 fix — scope validation was missing entirely, not just untested**
+Review caught that `scope` wasn't in any rule router's editable `fields` list, so a client sending `scope='person:RP'` was silently dropped (no error, request "succeeded," row kept `household` from the schema default) rather than rejected. That's worse than no validation — it looks like the write was honored. Added `scope` to `fields` on all three rule CRUD routers and to `/api/teach`'s per-table config, validated against `DOMAINS.scope = ['household']` in `src/routes/validate.js`. This validation *is* the enforcement of A1's "app-level validation restricts it to 'household' in v1" clause — the column itself carries no CHECK constraint on purpose (a CHECK would hard-code v1's restriction into the schema, which A1 says is exactly what the hook is meant to avoid). Covered by the scope negative test in `test/api.test.js`.
+
+**Phase 3 — /api/teach's missing version check is last-write-wins between editors, by design, not just an implementation shortcut**
+Recorded here explicitly as a product decision, not merely a technical note: if two of the three editors (PK / RP / PS) both use one-tap teach on the same rule in quick succession, the second write silently overwrites the first with no 409 and no warning shown to either editor at the moment it happens. This is acceptable for v1 specifically because `knowledge_events` makes every teach write recoverable after the fact (via undo) — the audit log is the safety net, not real-time conflict detection. If this two-editor collision turns out to happen often in practice, the fix is to give `/api/teach` the same version-check path the full CRUD PUT already has; that's a deliberately deferred, not forgotten, tradeoff.
+
+**Phase 3 — knowledge_events.source gained 'undo' (migration 005)**
+Previously undo reversals were logged as `source='manual_edit'`, indistinguishable from a genuine edit in the audit timeline — which defeats the purpose of keeping the timeline, since "was this row's value chosen deliberately or was it a reversal" is exactly the kind of question the timeline exists to answer. `knowledge_events.source`'s CHECK is rebuilt (migration 005, same table-swap technique as migration 003) to add `'undo'` alongside the existing values. `src/routes/knowledgeEvents.js`'s undo handler now logs `source: 'undo'` instead of `'manual_edit'`.
+
+`undo` is ordinary v1 functionality, not a v2 hook — CLAUDE.md's A1 has been amended to say so explicitly: `manual_edit`, `one_tap_teach`, `seed`, and `undo` are all actively-emitted v1 source values, and only `inventory_event`/`person_pref` remain the reserved-and-dormant hook values that bullet actually governs. This isn't a logged exception to "anything beyond these four [hooks] is scope creep" — undo was never one of the four hooks to begin with; it's a v1 feature that happens to share a column with the two real hooks.
+
+**Phase 3 fix — EDITORS corrected from ['PK','Sriranjani'] to ['PK','RP','PS']**
+`src/routes/editor.js` was built against a two-editor list pasted into the session for the Phase 3 prompt, which didn't match either the canonical `KitchenPlanner_Build_Prompt_v1.3_2026-07-16.md` ("Three named editors... PK / RP / PS") or CLAUDE.md's own Users section (RP = wife, PS = sister-in-law). Fixed to the three-editor list matching both source-of-truth documents.
+
+---
+
+**Phase 4 — CRUD routes added for special_day_types/special_day_dates/special_day_assignments (not in the Phase 3 route list)**
+The Special Days admin page (build-prompt Phase 4 item 5: "calendar list, assign a type to a date, per-day allow/avoid/block editor") has no function without a backing API, and Phase 3's explicit route list never named these three tables. Added `src/routes/specialDays.js` now rather than leaving the page non-functional. None of the three tables has a `version` column, so these follow the plans/actual_meals last-write-wins CRUD pattern, not optimistic concurrency. `special_day_dates` has a composite `(date, special_day_type_id)` key with no surrogate id; its `knowledge_events` rows use `row_id: 0` as a placeholder since there's no single-integer identity to log against — flagged here as a minor audit-log imprecision, not a correctness issue (the event's `old_value`/`new_value` JSON still fully identifies the affected row).
+
+**Phase 4 — pages fetch data client-side via Alpine, not server-side query interpolation**
+Each page is a real URL rendered by Express (satisfying the "no client-side routing, no fetch-everything SPA behavior" guardrail — navigating between `/`, `/plan`, `/shopping` etc. is a full page load), but the data on each page loads via an Alpine `x-init` calling the already-built `/api/*` JSON routes rather than the server interpolating DB query results into the HTML string before sending it. This reuses the entire Phase 3 API surface as-is (no duplicate query logic living in two places) and keeps the editor-identity cookie flow uniform — the same cookie that authenticates JSON writes rides along on the page's own fetch calls with no extra wiring. Documented as a deliberate architectural choice since "server-rendered HTML" could be read either way.
+
+**Phase 4 — reverse one-tap teach on a rejected suggestion writes a long-gap `dish_repeat_rules` row, not an ingredient rule**
+The build prompt's example ("avoid carrot in kootu?") implies rejecting a suggestion should sometimes write an `ingredient_family_rules` row, but a bare suggestion rejection in the Plan view's suggestion picker doesn't carry "which ingredient" — only "which dish." Implemented the reject action as teaching a soft `dish_repeat_rules` row with a 90-day `min_gap_days` for that specific dish item (effectively "don't suggest this again for a long while"), which the existing repeat-gap engine step already knows how to interpret, rather than inventing new ingredient-attribution UI to guess which ingredient the household actually objects to.
+
+**Phase 4 — editor identity guard is client-side JS (cookie check + redirect), not server-side middleware, on page routes**
+The JSON API's `editorMiddleware` (Phase 3) rejects unidentified requests server-side with a 400. Applying that same middleware to the HTML page routes would 400 a first-time visitor's very first page load before they ever see the picker — so the picker redirect is instead a small inline script in `pageShell()` that checks `document.cookie` and redirects to `/pick-editor` if missing/invalid. The page itself still renders (200) either way; write actions on that page will still fail against the real API without a valid cookie, so this is a UX nicety, not the actual security boundary (there is no real security boundary in this LAN-trust app per A1/A2 — no auth provider).
+
+**Phase 4 — OPERATIONS.md created early, as v0.1, with only §Smoke-Test filled in**
+The build prompt's Phase 4 GATE requires a §Smoke-Test section in `/docs/OPERATIONS.md`, but the full runbook (start/stop, backup/restore, taxonomy-update procedure, Predator deployment) is explicitly Phase 5 scope. Created the file now at v0.1 with just that one section rather than either skipping the GATE requirement or writing Phase 5 content early; Phase 5 will update it in place to v1.0 per CLAUDE.md A4 (never forked into a second file).
+
+**Phase 4 — 12-step smoke test executed via scripted HTTP calls against `createApp(db)`, not by hand in a browser**
+This session has no browser tool. The smoke-test script calls the exact same `/api/*` routes each page's own Alpine code calls, against the same `createApp(db)` factory the real server uses — so a pass means the corresponding UI action would succeed identically, but it does not verify the page actually *renders* correctly, is tappable at 375px, or looks right in dark mode. Those remain explicitly unverified (see OPERATIONS.md §Smoke-Test's "not covered" list and the Phase 4 report) rather than being claimed as passed.
