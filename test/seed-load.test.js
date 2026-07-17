@@ -45,7 +45,7 @@ test('seed loader is idempotent: counts stable across two runs', () => {
   }
 });
 
-test('taxonomy v1.4 counts: 17 classes, 72 ingredients, 191 items', () => {
+test('taxonomy v1.5 counts: 17 classes, 73 ingredients, 191 items', () => {
   const dbPath = tmpDbPath();
   try {
     const db = openDb(dbPath);
@@ -55,7 +55,7 @@ test('taxonomy v1.4 counts: 17 classes, 72 ingredients, 191 items', () => {
     const ingredientCount = db.prepare("SELECT COUNT(*) c FROM ingredients WHERE origin='seed'").get().c;
     assert.equal(classCount, 17);
     assert.equal(itemCount, 191);
-    assert.equal(ingredientCount, 72);
+    assert.equal(ingredientCount, 73);
     db.close();
   } finally {
     cleanup(dbPath);
@@ -315,5 +315,73 @@ test('49 items with no ingredient roles are mostly expected (plain dosai etc), b
     db.close();
   } finally {
     cleanup(dbPath);
+  }
+});
+
+test('taxonomy v1.5: retired family fam_004_003 (pitlai merge) is cleared when unreferenced', () => {
+  const dbPath = tmpDbPath();
+  try {
+    const db = openDb(dbPath);
+    seed(db); // current JSON already has fam_004_003 retired
+    const row = db.prepare("SELECT id FROM dish_families WHERE external_id = 'fam_004_003'").get();
+    assert.equal(row, undefined, 'retired family must be cleared from the seed rows');
+    // dish_015/016 must have been reparented to fam_004_002, not orphaned or deleted
+    const reparented = db
+      .prepare(
+        `SELECT di.external_id, df.external_id AS family_external_id
+         FROM dish_items di JOIN dish_families df ON df.id = di.family_id
+         WHERE di.external_id IN ('dish_015','dish_016')`
+      )
+      .all();
+    assert.equal(reparented.length, 2);
+    for (const r of reparented) assert.equal(r.family_external_id, 'fam_004_002');
+    db.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+test('clearStaleSeedRows: a stale seed row with external_id removed-from-JSON but still referenced STOPs the loader', () => {
+  const dbPath = tmpDbPath();
+  const jsonPath = tmpJsonPath();
+  try {
+    const db = openDb(dbPath);
+    // Seed once with the real (v1.5) taxonomy so schema + baseline data exist.
+    seed(db, TAXONOMY_PATH);
+
+    // Now simulate retiring a family that is still referenced: build a modified JSON
+    // that drops one currently-present family (fam_006_001, kari) entirely (and its
+    // items), then plant a dish_compatibility_rule referencing that family before
+    // re-seeding with the modified JSON.
+    const json = JSON.parse(fs.readFileSync(TAXONOMY_PATH, 'utf8'));
+    const kariFamilyRow = db.prepare("SELECT id FROM dish_families WHERE external_id = 'fam_006_001'").get();
+    assert.ok(kariFamilyRow, 'fixture assumption: fam_006_001 exists in the current taxonomy');
+
+    // Plant a reference that would be orphaned by removing the family.
+    db.prepare(
+      `INSERT INTO dish_compatibility_rules (source_family_id, target_family_id, direction, preference, rationale_tag, updated_by)
+       VALUES (?, ?, 'morning_to_noon', 'prefers', 'other', 'test')`
+    ).run(kariFamilyRow.id, kariFamilyRow.id);
+
+    // Remove fam_006_001 (and any items under it) from the JSON to simulate retirement.
+    for (const cls of json.dish_classes) {
+      if (cls.families) cls.families = cls.families.filter((f) => f.id !== 'fam_006_001');
+      if (cls.items) cls.items = cls.items.filter((it) => it.family_id !== 'fam_006_001');
+    }
+    fs.writeFileSync(jsonPath, JSON.stringify(json));
+
+    assert.throws(
+      () => seed(db, jsonPath),
+      /fam_006_001/,
+      'loader must STOP (throw) rather than silently delete a referenced stale family'
+    );
+
+    // The family and the rule must still be present — nothing was silently deleted.
+    assert.ok(db.prepare("SELECT id FROM dish_families WHERE external_id = 'fam_006_001'").get());
+
+    db.close();
+  } finally {
+    cleanup(dbPath);
+    if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
   }
 });

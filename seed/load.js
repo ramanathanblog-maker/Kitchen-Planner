@@ -105,30 +105,110 @@ function titleCase(key) {
     .join(' ');
 }
 
-// Removes seed-origin rows from a prior taxonomy shape (no external_id) so a v1.4
-// reseed starts clean. Never touches origin='user' rows. See DECISIONS.md Phase 1b
-// entry: this is a structural rewrite, not a data refresh, so old seed-origin rows
-// can't be matched/merged by external_id — they're simply stale.
-function clearStaleSeedRows(db) {
-  const staleItems = db.prepare("SELECT id FROM dish_items WHERE origin = 'seed' AND external_id IS NULL").all();
-  for (const { id } of staleItems) {
+// Error class thrown when a stale seed row (retired from the JSON, e.g. taxonomy
+// v1.5's fam_004_003 pitlai merge) is still referenced by a rule or a plan/actual
+// meal. The loader must stop rather than silently delete data that's in use — see
+// amendment §0.
+class StaleSeedRowReferencedError extends Error {}
+
+function collectCurrentExternalIds(dishClasses, vegetables) {
+  const familyIds = new Set();
+  const itemIds = new Set();
+  const ingredientIds = new Set();
+  for (const veg of vegetables) ingredientIds.add(veg.id);
+  for (const cls of dishClasses) {
+    familyIds.add(cls.id);
+    for (const fam of cls.families || []) familyIds.add(fam.id);
+    for (const subfam of cls.subfamilies || []) familyIds.add(subfam.id);
+    for (const item of cls.items || []) itemIds.add(item.id);
+  }
+  return { familyIds, itemIds, ingredientIds };
+}
+
+// Removes seed-origin rows that no longer belong in the current taxonomy shape.
+// Two cases:
+//  1. Legacy rows with no external_id at all (pre-v1.4 shape) — always stale, no
+//     reference check needed beyond the cascades already performed here.
+//  2. Rows whose external_id is set but no longer appears in the current JSON
+//     (e.g. a retired family like fam_004_003 pitlai, merged away in v1.5). Before
+//     deleting these, check whether any dish_compatibility_rules, dish_repeat_rules,
+//     plans, or actual_meals row still references them — if so, STOP (throw) rather
+//     than silently delete; report what's referencing it.
+// Never touches origin='user' rows.
+function clearStaleSeedRows(db, currentIds) {
+  const { familyIds, itemIds, ingredientIds } = currentIds;
+
+  const staleItemRows = db
+    .prepare("SELECT id, external_id FROM dish_items WHERE origin = 'seed' AND (external_id IS NULL OR external_id NOT IN (SELECT value FROM json_each(?)))")
+    .all(JSON.stringify([...itemIds]));
+  for (const { id, external_id } of staleItemRows) {
+    if (external_id !== null) {
+      const refs = [];
+      const repeatRefs = db.prepare('SELECT id FROM dish_repeat_rules WHERE dish_item_id = ?').all(id);
+      if (repeatRefs.length) refs.push(`dish_repeat_rules(${repeatRefs.map((r) => r.id).join(',')})`);
+      const compatRefs = db
+        .prepare('SELECT id FROM dish_compatibility_rules WHERE source_dish_item_id = ? OR target_dish_item_id = ?')
+        .all(id, id);
+      if (compatRefs.length) refs.push(`dish_compatibility_rules(${compatRefs.map((r) => r.id).join(',')})`);
+      const planRefs = db.prepare('SELECT id FROM plans WHERE dish_item_id = ?').all(id);
+      if (planRefs.length) refs.push(`plans(${planRefs.map((r) => r.id).join(',')})`);
+      const actualRefs = db.prepare('SELECT id FROM actual_meals WHERE dish_item_id = ?').all(id);
+      if (actualRefs.length) refs.push(`actual_meals(${actualRefs.map((r) => r.id).join(',')})`);
+      if (refs.length) {
+        throw new StaleSeedRowReferencedError(
+          `Cannot clear stale seed dish_item ${external_id} (id=${id}): still referenced by ${refs.join(', ')}. Resolve or reassign these references before reseeding.`
+        );
+      }
+    }
     db.prepare('DELETE FROM dish_item_ingredients WHERE dish_item_id = ?').run(id);
     db.prepare('DELETE FROM dish_repeat_rules WHERE dish_item_id = ?').run(id);
     db.prepare('DELETE FROM dish_compatibility_rules WHERE source_dish_item_id = ? OR target_dish_item_id = ?').run(id, id);
     db.prepare('DELETE FROM special_day_assignments WHERE dish_item_id = ?').run(id);
     db.prepare('DELETE FROM dish_items WHERE id = ?').run(id);
   }
-  const staleFamilies = db
-    .prepare("SELECT id FROM dish_families WHERE origin = 'seed' AND external_id IS NULL ORDER BY parent_id IS NULL")
-    .all();
-  for (const { id } of staleFamilies) {
+
+  const staleFamilyRows = db
+    .prepare(
+      "SELECT id, external_id FROM dish_families WHERE origin = 'seed' AND (external_id IS NULL OR external_id NOT IN (SELECT value FROM json_each(?))) ORDER BY parent_id IS NULL"
+    )
+    .all(JSON.stringify([...familyIds]));
+  for (const { id, external_id } of staleFamilyRows) {
+    if (external_id !== null) {
+      const refs = [];
+      const remainingItems = db.prepare('SELECT id FROM dish_items WHERE family_id = ?').all(id);
+      if (remainingItems.length) refs.push(`dish_items(${remainingItems.map((r) => r.id).join(',')})`);
+      const compatRefs = db
+        .prepare('SELECT id FROM dish_compatibility_rules WHERE source_family_id = ? OR target_family_id = ?')
+        .all(id, id);
+      if (compatRefs.length) refs.push(`dish_compatibility_rules(${compatRefs.map((r) => r.id).join(',')})`);
+      if (refs.length) {
+        throw new StaleSeedRowReferencedError(
+          `Cannot clear stale seed dish_family ${external_id} (id=${id}): still referenced by ${refs.join(', ')}. Resolve or reassign these references before reseeding.`
+        );
+      }
+    }
     db.prepare('DELETE FROM dish_compatibility_rules WHERE source_family_id = ? OR target_family_id = ?').run(id, id);
     db.prepare('DELETE FROM ingredient_family_rules WHERE family_id = ?').run(id);
     db.prepare('DELETE FROM special_day_assignments WHERE family_id = ?').run(id);
     db.prepare('DELETE FROM dish_families WHERE id = ?').run(id);
   }
-  const staleIngredients = db.prepare("SELECT id FROM ingredients WHERE origin = 'seed' AND external_id IS NULL").all();
-  for (const { id } of staleIngredients) {
+
+  const staleIngredientRows = db
+    .prepare("SELECT id, external_id FROM ingredients WHERE origin = 'seed' AND (external_id IS NULL OR external_id NOT IN (SELECT value FROM json_each(?)))")
+    .all(JSON.stringify([...ingredientIds]));
+  for (const { id, external_id } of staleIngredientRows) {
+    if (external_id !== null) {
+      const linkRefs = db.prepare('SELECT id FROM dish_item_ingredients WHERE ingredient_id = ?').all(id);
+      const ruleRefs = db.prepare('SELECT id FROM ingredient_family_rules WHERE ingredient_id = ?').all(id);
+      if (linkRefs.length || ruleRefs.length) {
+        const refs = [];
+        if (linkRefs.length) refs.push(`dish_item_ingredients(${linkRefs.map((r) => r.id).join(',')})`);
+        if (ruleRefs.length) refs.push(`ingredient_family_rules(${ruleRefs.map((r) => r.id).join(',')})`);
+        throw new StaleSeedRowReferencedError(
+          `Cannot clear stale seed ingredient ${external_id} (id=${id}): still referenced by ${refs.join(', ')}. Resolve or reassign these references before reseeding.`
+        );
+      }
+    }
     db.prepare('DELETE FROM dish_item_ingredients WHERE ingredient_id = ?').run(id);
     db.prepare('DELETE FROM ingredient_family_rules WHERE ingredient_id = ?').run(id);
     db.prepare('DELETE FROM ingredients WHERE id = ?').run(id);
@@ -287,10 +367,13 @@ function seed(db, jsonPath = JSON_PATH) {
     upsertSetting(db, 'meal_composition_multiple_leads_severity', data.rules.meal_composition.multiple_leads_severity);
     upsertSetting(db, 'meal_composition_lead_roles', JSON.stringify(data.rules.meal_composition.lead_roles));
 
-    clearStaleSeedRows(db);
+    // Upsert current-shape rows first so any family/item that moved (e.g. taxonomy
+    // v1.5 reparenting dish_015/016 out of the retired fam_004_003) is reparented
+    // before we check what, if anything, is still stuck pointing at the old row.
     const ingredientIds = seedIngredientRegistry(db, data.vegetables);
     const counts = seedDishClasses(db, data.dish_classes, ingredientIds);
     seedInterviewRules(db);
+    clearStaleSeedRows(db, collectCurrentExternalIds(data.dish_classes, data.vegetables));
 
     return counts;
   });
@@ -305,4 +388,4 @@ if (require.main === module) {
   db.close();
 }
 
-module.exports = { seed, loadJson, titleCase };
+module.exports = { seed, loadJson, titleCase, clearStaleSeedRows, collectCurrentExternalIds, StaleSeedRowReferencedError };
