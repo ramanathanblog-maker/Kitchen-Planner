@@ -114,6 +114,33 @@ test('GET /knowledge is truly server-rendered: a seeded rule and its ingredient/
   }
 });
 
+test('GET /knowledge: the verdict <select> for the seeded never-in-Kari rule has <option value="never" selected>, not the first option', async () => {
+  const ctx = await startServer();
+  try {
+    const rule = ctx.db
+      .prepare(
+        `SELECT ifr.id, ifr.verdict FROM ingredient_family_rules ifr
+         JOIN ingredients i ON i.id = ifr.ingredient_id WHERE i.name_en = 'Murungakkai'`
+      )
+      .get();
+    assert.equal(rule.verdict, 'never', 'test assumption: the seeded rule is a non-first-option value');
+
+    const html = await (await fetch(`${ctx.base}/knowledge`)).text();
+    // Isolate this rule's <select> block so the assertion can't accidentally
+    // match a different rule's or the add-rule form's <option>.
+    const cardStart = html.indexOf('Murungakkai');
+    const selectStart = html.indexOf('<select name="verdict">', cardStart);
+    const selectEnd = html.indexOf('</select>', selectStart);
+    assert.ok(selectStart > -1 && selectEnd > selectStart, 'expected a verdict <select> on the Murungakkai rule card');
+    const selectHtml = html.slice(selectStart, selectEnd);
+
+    assert.match(selectHtml, /<option value="never" selected>never<\/option>/);
+    assert.doesNotMatch(selectHtml, /<option value="preferred" selected>/, 'the first option must not be selected when the stored value is not "preferred"');
+  } finally {
+    await ctx.close();
+  }
+});
+
 test('GET /display (kiosk) is truly server-rendered: today\'s planned dish appears in the raw HTML immediately', async () => {
   const ctx = await startServer();
   try {

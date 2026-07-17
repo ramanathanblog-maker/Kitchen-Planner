@@ -50,13 +50,16 @@ function pageRouter(db) {
       }
     }
     // P2a — single-child drill collapse (generalizes the dead-end rule above): a
-    // class with exactly one family (e.g. Rasam, Thogayal — verified against seed
-    // data, not assumed) has no real "which family?" choice to make, so skip that
-    // screen and render the family's item list inline on this same role-level page
-    // instead of a link to the family drill level. Classes with >1 family (e.g.
+    // class with exactly one family (e.g. Rasam, Pachadi, Thogayal — verified
+    // against seed data, not assumed) has no real "which family?" choice to make,
+    // so skip that screen and render the family's item list inline on this same
+    // role-level page instead of a link to the family drill level — regardless of
+    // whether that one family also happens to be a dead end (1 item): a lone item
+    // still gets the full leaf-item treatment (status chip, block reason, direct
+    // Choose) rather than a bare annotated button. Classes with >1 family (e.g.
     // Sambar: Regular / Arachuvitta Pitlai) are unaffected — still shown as links.
     for (const group of groups) {
-      if (group.families.length === 1 && !group.families[0].deadEndItemId) {
+      if (group.families.length === 1) {
         group.inlineItems = evaluateItemsForLeaf(db, { date, slot, items: group.families[0].items });
         group.inlineFamilyName = group.families[0].name;
       }
