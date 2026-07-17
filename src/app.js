@@ -78,7 +78,7 @@ function createApp(db) {
     res.type('html').send(renderSpecialDays(getSpecialDaysData(db)));
   });
   // Guided plan wizard (Phase 4b Amendment §2/§8) — real server-rendered pages
-  // under /plan/:date/:slot[...], alongside the existing flat picker at /plan.
+  // under /plan/:date/:slot[...] — the sole entry point for planning a slot.
   app.use('/plan', wizardPageRouter(db));
 
   app.get('/display', (req, res) => {

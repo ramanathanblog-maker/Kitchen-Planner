@@ -49,7 +49,7 @@ async function startServer() {
 
 const PAGES = [
   { path: '/', name: 'Today', marker: /todayView\(/ },
-  { path: '/plan', name: 'Plan', marker: /planView\(\)/ },
+  { path: '/plan', name: 'Plan', marker: /Guided plan/ },
   { path: '/shopping', name: 'Shopping', marker: /shoppingView\(\)/ },
   { path: '/knowledge', name: 'Knowledge', marker: /knowledgeView\(/ },
   { path: '/special-days', name: 'Special days', marker: /specialDaysView\(\)/ },

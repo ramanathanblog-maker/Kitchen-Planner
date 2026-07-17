@@ -389,7 +389,7 @@ test('regression: /api/suggest findings never contain a zero-leads entry, and co
   }
 });
 
-test('night hub has empty rows (fallback to flat picker, amendment §10.1)', () => {
+test('night hub has empty rows (unspecified pattern, amendment §10.1)', () => {
   const { db, dbPath } = tmpDb();
   try {
     const hub = wizard.getHubData(db, { date: '2026-07-20', slot: 'night' });

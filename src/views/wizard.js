@@ -41,7 +41,7 @@ function renderWizardHub(hub) {
     const body = `
     <h1>Guided plan — ${escapeHtml(date)}</h1>
     <p>${escapeHtml(SLOT_LABELS[slot] || slot)}</p>
-    <p>No pattern set for this slot yet${hub.note ? ' — ' + escapeHtml(hub.note) : ''}. Use the flat picker on the Plan page instead.</p>
+    <p>No pattern set for this slot yet${hub.note ? ' — ' + escapeHtml(hub.note) : ''}.</p>
     <a class="btn" href="/plan">Back to Plan</a>`;
     return pageShell({ title: 'Guided plan', activeTab: 'plan', bodyHtml: body });
   }
