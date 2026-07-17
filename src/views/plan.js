@@ -20,6 +20,7 @@ function dayHtml(day, plansByDaySlot, itemsById, compositionWarnings) {
         ${compositionBannerHtml(compositionWarnings[`${day}|${slotKey}`])}
         ${dishesHtml}
         <button class="btn" @click="openPicker(${jsonForAttr(day)}, ${jsonForAttr(slotKey)})">+ Add</button>
+        <a class="btn" href="/plan/${day}/${slotKey}">Guided plan</a>
       </div>`;
     })
     .join('\n');

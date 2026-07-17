@@ -34,6 +34,7 @@ const { getKnowledgeData } = require('./data/knowledge');
 const { getSpecialDaysData } = require('./data/specialDays');
 const { getDisplayShoppingData } = require('./routes/display');
 const { ingredientsForRange } = require('./routes/shopping');
+const { pageRouter: wizardPageRouter, apiRouter: wizardApiRouter } = require('./routes/wizard');
 
 function createApp(db) {
   const app = express();
@@ -76,6 +77,10 @@ function createApp(db) {
   app.get('/special-days', (req, res) => {
     res.type('html').send(renderSpecialDays(getSpecialDaysData(db)));
   });
+  // Guided plan wizard (Phase 4b Amendment §2/§8) — real server-rendered pages
+  // under /plan/:date/:slot[...], alongside the existing flat picker at /plan.
+  app.use('/plan', wizardPageRouter(db));
+
   app.get('/display', (req, res) => {
     const today = getTodayData(db, todayStr());
     const shopping = getDisplayShoppingData(db);
@@ -106,6 +111,7 @@ function createApp(db) {
   api.use('/special_day_types', specialDayTypesRouter(db));
   api.use('/special_day_dates', specialDayDatesRouter(db));
   api.use('/special_day_assignments', specialDayAssignmentsRouter(db));
+  api.use('/wizard', wizardApiRouter(db));
 
   app.use('/api', api);
   app.use('/api', errorHandler);
