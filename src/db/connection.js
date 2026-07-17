@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const Database = require('better-sqlite3');
 
 function openDb(dbPath) {
-  const resolved = dbPath || path.join(__dirname, '..', '..', 'data', 'kitchen.db');
+  const resolved = dbPath || process.env.KITCHEN_DB || path.join(__dirname, '..', '..', 'data', 'kitchen.db');
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
   const db = new Database(resolved);
   db.pragma('journal_mode = WAL');
