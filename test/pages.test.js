@@ -204,3 +204,18 @@ test('Today page end-to-end: pick an editor, plan a dish, load Today, mark day a
     await ctx.close();
   }
 });
+
+test('GET /display (kiosk) has a theme toggle that defaults to light and persists via localStorage, scoped to the kiosk page only', async () => {
+  const ctx = await startServer();
+  try {
+    const kioskHtml = await (await fetch(`${ctx.base}/display`)).text();
+    assert.match(kioskHtml, /class="theme-toggle"/, 'kiosk page must expose a visible theme toggle');
+    assert.match(kioskHtml, /data-theme',\s*saved === 'dark' \? 'dark' : 'light'/, 'must default to light regardless of system preference when nothing saved yet');
+    assert.match(kioskHtml, /localStorage/, 'toggle choice must persist via localStorage');
+
+    const todayHtml = await (await fetch(`${ctx.base}/`)).text();
+    assert.doesNotMatch(todayHtml, /class="theme-toggle"/, 'non-kiosk pages keep following prefers-color-scheme automatically, unchanged');
+  } finally {
+    await ctx.close();
+  }
+});
