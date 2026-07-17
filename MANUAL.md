@@ -13,7 +13,15 @@ The shopping view (`GET /api/shopping?from=<date>&to=<date>`, UI arriving in a l
 
 So if you've planned meals for the next 7 days, the Week view is your full grocery run, and Tomorrow is just a quick "what do I need before my next shop" glance at a subset of it — not a different day's list.
 
+Both views on the `/shopping` page and the `/display` kiosk start from **tomorrow, not today** — today's ingredients are assumed already on hand, so they never appear in either list.
+
 Ingredients marked "use up as leftovers first" are shown separately from what you actually need to buy, in both views, so you don't accidentally shop for something already sitting in the fridge.
+
+## Past-day plans are locked
+
+Once a day is in the past, RP and PS can no longer change what was planned for it (the wizard drill and Today's edit/✕ affordances are disabled with a "past days are locked — ask PK to change this" message) — only PK can. This is enforced by the server itself, not just hidden in the UI.
+
+This does **not** apply to what was actually eaten (`actual_meals`) — RP and PS can still correct that log for any past date, any time, since fixing a record of what happened is different from rewriting what was intended.
 
 ## Editing rules and ingredients (PK, admin)
 

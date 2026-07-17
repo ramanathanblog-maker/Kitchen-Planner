@@ -8,7 +8,10 @@ const express = require('express');
 const { ApiError } = require('./errors');
 const { assertRequired, assertInDomain } = require('./validate');
 const { logEvent } = require('./resource');
+const { assertPlanEditable } = require('./planLock');
+const { readEditorFromCookie } = require('./editor');
 const { getSlotPattern } = require('../data/mealPatterns');
+const { todayStr } = require('../data/dates');
 const {
   rowSlug,
   findRowBySlug,
@@ -30,7 +33,9 @@ function pageRouter(db) {
     const { date, slot } = req.params;
     assertInDomain(slot, 'slot', 'slot');
     const hub = getHubData(db, { date, slot });
-    res.type('html').send(renderWizardHub(hub));
+    const editor = readEditorFromCookie(req);
+    const locked = date < todayStr() && editor !== 'PK';
+    res.type('html').send(renderWizardHub(hub, { locked }));
   });
 
   router.get('/:date/:slot/:rowSlug', (req, res) => {
@@ -119,6 +124,7 @@ function apiRouter(db) {
 
     const dishItemId = Number(body.dishItemId);
     if (!Number.isInteger(dishItemId)) throw new ApiError(400, 'dishItemId must be an integer');
+    assertPlanEditable(req.editor, body.date);
 
     const created = db.transaction(() => {
       const chosen = chosenForRole(db, { date: body.date, slot: body.slot, role: row.role, filterClass: row.filter_class });
@@ -143,6 +149,7 @@ function apiRouter(db) {
     const body = req.body || {};
     assertRequired(body, ['date', 'slot']);
     assertInDomain(body.slot, 'slot', 'slot');
+    assertPlanEditable(req.editor, body.date);
     const pattern = getSlotPattern(db, body.slot);
     const collapseRow = pattern.rows.find((r) => r.collapses_pattern);
     if (!collapseRow) return res.status(200).json({ cleared: [] });

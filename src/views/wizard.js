@@ -18,7 +18,7 @@ function chipLabelFor(status) {
   return '• allowed';
 }
 
-function rowHtml(date, slot, row) {
+function rowHtml(date, slot, row, locked) {
   const slug = rowSlug(row);
   const count = row.chosen.length;
   // P2e — each already-chosen dish gets its own "Remove" action, distinct from
@@ -29,23 +29,26 @@ function rowHtml(date, slot, row) {
     .map(
       (c) => `<span class="chip chip--allowed" style="margin-right: var(--space-1);">
       ${escapeHtml(c.name_en)}
-      <button class="btn" style="padding: 0 var(--space-1); margin-left: var(--space-1);" @click="removePlan(${c.plan_id})" title="Remove ${escapeHtml(c.name_en)}">✕</button>
+      ${locked ? '' : `<button class="btn" style="padding: 0 var(--space-1); margin-left: var(--space-1);" @click="removePlan(${c.plan_id})" title="Remove ${escapeHtml(c.name_en)}">✕</button>`}
     </span>`
     )
     .join('');
+  const editAffordance = locked
+    ? `<span class="btn" style="opacity: 0.5;" title="past days are locked — ask PK to change this">${count >= row.max ? 'Edit' : (row.max > 1 ? `+ (${count}/${row.max})` : '+')}</span>`
+    : `<a class="btn" href="/plan/${date}/${slot}/${slug}" data-role="${escapeHtml(row.role)}">
+      ${count >= row.max ? 'Edit' : (row.max > 1 ? `+ (${count}/${row.max})` : '+')}
+    </a>`;
   return `
   <div class="dish-card" style="justify-content: space-between;">
     <div style="flex:1;">
       <div class="dish-card__name">${escapeHtml(row.label)}</div>
       ${count ? `<div class="dish-card__family">${chosenHtml}</div>` : ''}
     </div>
-    <a class="btn" href="/plan/${date}/${slot}/${slug}" data-role="${escapeHtml(row.role)}">
-      ${count >= row.max ? 'Edit' : (row.max > 1 ? `+ (${count}/${row.max})` : '+')}
-    </a>
+    ${editAffordance}
   </div>`;
 }
 
-function renderWizardHub(hub) {
+function renderWizardHub(hub, { locked = false } = {}) {
   const { date, slot, rows, compositionWarning } = hub;
 
   if (rows.length === 0) {
@@ -72,7 +75,8 @@ function renderWizardHub(hub) {
       <div class="slot-header__date">${escapeHtml(date)}</div>
     </div>
     ${compositionWarning ? `<div class="composition-banner" role="status" aria-live="polite">${escapeHtml(compositionWarning.message)}</div>` : ''}
-    ${visibleRows.map((r) => rowHtml(date, slot, r)).join('\n')}
+    ${locked ? `<div class="composition-banner" role="status" aria-live="polite">past days are locked — ask PK to change this</div>` : ''}
+    ${visibleRows.map((r) => rowHtml(date, slot, r, locked)).join('\n')}
     <div class="sheet__footer" style="position:static; margin-top: var(--space-4);">
       <a class="btn btn-primary" style="width:100%; display:block; text-align:center;" href="/plan">Save day</a>
     </div>

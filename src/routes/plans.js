@@ -6,6 +6,7 @@ const express = require('express');
 const { ApiError } = require('./errors');
 const { assertInDomain, assertRequired } = require('./validate');
 const { logEvent } = require('./resource');
+const { assertPlanEditable } = require('./planLock');
 
 function simpleCrudRouter(db, table) {
   const router = express.Router();
@@ -46,6 +47,7 @@ function simpleCrudRouter(db, table) {
     const body = req.body || {};
     assertRequired(body, ['date', 'slot', 'dish_item_id']);
     assertInDomain(body.slot, 'slot', 'slot');
+    if (table === 'plans') assertPlanEditable(req.editor, body.date);
     const cols = fields.filter((f) => body[f] !== undefined);
     const row = db.transaction(() => {
       const info = db
@@ -63,6 +65,7 @@ function simpleCrudRouter(db, table) {
     assertInDomain(body.slot, 'slot', 'slot');
     const current = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(req.params.id);
     if (!current) throw new ApiError(404, 'not_found');
+    if (table === 'plans') assertPlanEditable(req.editor, current.date);
     const cols = fields.filter((f) => body[f] !== undefined);
     const updated = db.transaction(() => {
       if (cols.length) {
@@ -81,6 +84,7 @@ function simpleCrudRouter(db, table) {
   router.delete('/:id', (req, res) => {
     const current = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(req.params.id);
     if (!current) throw new ApiError(404, 'not_found');
+    if (table === 'plans') assertPlanEditable(req.editor, current.date);
     db.transaction(() => {
       db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(req.params.id);
       logEvent(db, { who: req.editor, tableName: table, rowId: current.id, oldValue: current, newValue: null, source: 'manual_edit' });

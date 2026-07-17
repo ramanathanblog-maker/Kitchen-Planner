@@ -47,6 +47,9 @@ async function startServer() {
 function pk(extra = {}) {
   return { 'X-Editor': 'PK', 'Content-Type': 'application/json', ...extra };
 }
+function rp(extra = {}) {
+  return { 'X-Editor': 'RP', 'Content-Type': 'application/json', ...extra };
+}
 
 test('GET /health', async () => {
   const ctx = await startServer();
@@ -708,6 +711,105 @@ test('DELETE /api/rules/dish_repeat/:id works against a seed-origin rule (no ori
     assert.equal(delRes.status, 204);
     const gone = ctx.db.prepare('SELECT * FROM dish_repeat_rules WHERE id = ?').get(seededRule.id);
     assert.equal(gone, undefined);
+  } finally {
+    await ctx.close();
+  }
+});
+
+// P1 — past-day plans rows are locked for RP/PS, enforced server-side (not just
+// hidden in the UI): a direct API call from RP must 403, PK must still succeed,
+// and actual_meals (a log of what happened, not a rewrite of intent) must stay
+// editable by RP on any date.
+test('P1: past-day plans lock', async (t) => {
+  const ctx = await startServer();
+  try {
+    const yesterday = addDaysStr(todayStr(), -1);
+    const dish = ctx.db.prepare("SELECT id FROM dish_items WHERE external_id = 'dish_001'").get();
+
+    await t.test('RP write to a past-day plans row -> 403', async () => {
+      const res = await fetch(`${ctx.base}/api/plans`, {
+        method: 'POST',
+        headers: rp(),
+        body: JSON.stringify({ date: yesterday, slot: 'morning', dish_item_id: dish.id }),
+      });
+      assert.equal(res.status, 403);
+    });
+
+    await t.test('PK write to a past-day plans row -> succeeds', async () => {
+      const res = await fetch(`${ctx.base}/api/plans`, {
+        method: 'POST',
+        headers: pk(),
+        body: JSON.stringify({ date: yesterday, slot: 'morning', dish_item_id: dish.id }),
+      });
+      assert.equal(res.status, 201);
+    });
+
+    await t.test('RP write to today/future plans -> succeeds as before', async () => {
+      const res = await fetch(`${ctx.base}/api/plans`, {
+        method: 'POST',
+        headers: rp(),
+        body: JSON.stringify({ date: todayStr(), slot: 'morning', dish_item_id: dish.id }),
+      });
+      assert.equal(res.status, 201);
+    });
+
+    await t.test('RP write to a past-day actual_meals row -> succeeds (actuals unaffected)', async () => {
+      const res = await fetch(`${ctx.base}/api/actual_meals`, {
+        method: 'POST',
+        headers: rp(),
+        body: JSON.stringify({ date: yesterday, slot: 'morning', dish_item_id: dish.id }),
+      });
+      assert.equal(res.status, 201);
+    });
+
+    await t.test('RP PUT/DELETE on an existing past-day plans row -> 403', async () => {
+      const row = ctx.db.prepare("SELECT * FROM plans WHERE date = ?").get(yesterday);
+      assert.ok(row, 'expected the PK-created past-day plan row from above');
+      const putRes = await fetch(`${ctx.base}/api/plans/${row.id}`, {
+        method: 'PUT',
+        headers: rp(),
+        body: JSON.stringify({ note: 'x' }),
+      });
+      assert.equal(putRes.status, 403);
+      const delRes = await fetch(`${ctx.base}/api/plans/${row.id}`, { method: 'DELETE', headers: rp() });
+      assert.equal(delRes.status, 403);
+    });
+  } finally {
+    await ctx.close();
+  }
+});
+
+// P2 — shopping list excludes today: neither /api/display/shopping nor the
+// /shopping HTML page (the two real callers that resolve "today" themselves)
+// should ever surface today's date.
+test('P2: /api/display/shopping never includes today', async () => {
+  const ctx = await startServer();
+  try {
+    const res = await fetch(`${ctx.base}/api/display/shopping`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    const today = todayStr();
+    assert.notEqual(body.tomorrow.date, today);
+    assert.notEqual(body.week.from, today);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('P2: /shopping HTML page starts from tomorrow, not today', async () => {
+  const ctx = await startServer();
+  try {
+    const dish = ctx.db.prepare("SELECT id FROM dish_items WHERE external_id = 'dish_001'").get();
+    const today = todayStr();
+    await fetch(`${ctx.base}/api/plans`, {
+      method: 'POST',
+      headers: pk(),
+      body: JSON.stringify({ date: today, slot: 'morning', dish_item_id: dish.id }),
+    });
+    const res = await fetch(`${ctx.base}/shopping`);
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.ok(!html.includes(today), "today's date must not appear anywhere in the shopping page");
   } finally {
     await ctx.close();
   }

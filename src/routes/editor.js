@@ -26,4 +26,13 @@ function editorMiddleware(req, res, next) {
   next();
 }
 
-module.exports = { editorMiddleware, EDITORS };
+// For server-rendered HTML pages (not behind editorMiddleware, no hard 400 if
+// missing — /pick-editor's client-side redirect handles that case): best-effort
+// read of who's asking, so a page can decide what to show without requiring a
+// round trip through the API.
+function readEditorFromCookie(req) {
+  const cookies = parseCookies(req.headers.cookie);
+  return EDITORS.has(cookies.editor) ? cookies.editor : null;
+}
+
+module.exports = { editorMiddleware, readEditorFromCookie, EDITORS };
