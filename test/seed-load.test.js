@@ -45,7 +45,7 @@ test('seed loader is idempotent: counts stable across two runs', () => {
   }
 });
 
-test('taxonomy v1.5 counts: 17 classes, 73 ingredients, 191 items', () => {
+test('taxonomy v1.7 counts: 18 classes, 78 ingredients, 199 items', () => {
   const dbPath = tmpDbPath();
   try {
     const db = openDb(dbPath);
@@ -53,9 +53,9 @@ test('taxonomy v1.5 counts: 17 classes, 73 ingredients, 191 items', () => {
     const classCount = db.prepare("SELECT COUNT(*) c FROM dish_families WHERE parent_id IS NULL AND origin='seed'").get().c;
     const itemCount = db.prepare("SELECT COUNT(*) c FROM dish_items WHERE origin='seed'").get().c;
     const ingredientCount = db.prepare("SELECT COUNT(*) c FROM ingredients WHERE origin='seed'").get().c;
-    assert.equal(classCount, 17);
-    assert.equal(itemCount, 191);
-    assert.equal(ingredientCount, 73);
+    assert.equal(classCount, 18);
+    assert.equal(itemCount, 199);
+    assert.equal(ingredientCount, 78);
     db.close();
   } finally {
     cleanup(dbPath);
@@ -119,15 +119,26 @@ test('onion/garlic flags come from the JSON, not a false default', () => {
   }
 });
 
-test('sbm and child_bento_box are seeded as placeholders', () => {
+test('child_bento_box is seeded as a placeholder', () => {
+  const dbPath = tmpDbPath();
+  try {
+    const db = openDb(dbPath);
+    seed(db);
+    const bento = db.prepare("SELECT * FROM dish_items WHERE external_id = 'dish_162'").get();
+    assert.equal(bento.is_placeholder, 1);
+    db.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
+test('v1.7: sbm_unresolved (dish_142) is gone, removed per PK', () => {
   const dbPath = tmpDbPath();
   try {
     const db = openDb(dbPath);
     seed(db);
     const sbm = db.prepare("SELECT * FROM dish_items WHERE external_id = 'dish_142'").get();
-    assert.equal(sbm.is_placeholder, 1);
-    const bento = db.prepare("SELECT * FROM dish_items WHERE external_id = 'dish_162'").get();
-    assert.equal(bento.is_placeholder, 1);
+    assert.equal(sbm, undefined);
     db.close();
   } finally {
     cleanup(dbPath);
@@ -246,7 +257,7 @@ test('upsert: renaming an item in the JSON (external_id stable) and re-seeding u
     assert.equal(after.origin, 'seed');
 
     const totalItems = db.prepare("SELECT COUNT(*) c FROM dish_items WHERE origin='seed'").get().c;
-    assert.equal(totalItems, 191, 'rename must not create a duplicate row');
+    assert.equal(totalItems, 199, 'rename must not create a duplicate row');
 
     db.close();
   } finally {
