@@ -1,8 +1,8 @@
 {
-  "version": "1.4",
+  "version": "1.5",
   "metadata": {
-    "name": "taxonomy_comprehensive-ver 1.4",
-    "description": "Tamil Iyer meal taxonomy. v1.4: vathakozhambu + morkuzhambu restructured as families under kozhambu; rasam populated (10 items incl. mysore); side_items class added (appalam/pappadam/vadaam); meal_role + can_lead on all classes/families/items; repetition + meal_composition rules restored; ingredient aliases/allergy_sensitive restored.",
+    "name": "taxonomy_comprehensive-ver 1.5",
+    "description": "Tamil Iyer meal taxonomy. v1.5: arachuvitta_sambar + pitlai merged into one sambar family (fam_004_002) with poosanikkai/katharikkai/pavarkkai vegetables; poosanikkai ingredient added; retired fam_004_003. v1.4 base otherwise unchanged.",
     "slot_fit_legend": {
       "morning": "Rice-meal oriented slot",
       "noon": "Tiffin oriented slot",
@@ -24,7 +24,14 @@
       "tiffin_side": "Gravies accompanying tiffin — ADDED, confirm",
       "snack": "Children snacks / bento"
     },
-    "can_lead_legend": "True = may satisfy the day lead requirement alone. Class default in can_lead_default; per-item override in can_lead (meal_role_source=item_override). Admin-settable in app."
+    "can_lead_legend": "True = may satisfy the day lead requirement alone. Class default in can_lead_default; per-item override in can_lead (meal_role_source=item_override). Admin-settable in app.",
+    "changelog": [
+      {
+        "version": "1.5",
+        "date": "2026-07-17",
+        "change": "Merge arachuvitta+pitlai; add poosanikkai; retire fam_004_003."
+      }
+    ]
   },
   "vegetables": [
     {
@@ -630,6 +637,17 @@
       "category": "other",
       "aliases": [
         "coconut"
+      ],
+      "allergy_sensitive": false
+    },
+    {
+      "id": "veg_073",
+      "name_en": "poosanikkai",
+      "name_ta": "பூசணிக்காய்",
+      "category": "vegetable",
+      "aliases": [
+        "pumpkin",
+        "ash_gourd"
       ],
       "allergy_sensitive": false
     }
@@ -1514,20 +1532,8 @@
         {
           "id": "fam_004_002",
           "dish_class_id": "dc_004",
-          "name_en": "arachuvitta_sambar",
-          "name_ta": "அரச்சுவிட்ட சாம்பார்",
-          "slot_fit": [
-            "morning",
-            "night"
-          ],
-          "meal_role": "main_gravy",
-          "can_lead_default": true
-        },
-        {
-          "id": "fam_004_003",
-          "dish_class_id": "dc_004",
-          "name_en": "pitlai",
-          "name_ta": "பிட்லை",
+          "name_en": "arachuvitta_sambar_pitlai",
+          "name_ta": "அரச்சுவிட்ட சாம்பார் / பிட்லை",
           "slot_fit": [
             "morning",
             "night"
@@ -1670,8 +1676,8 @@
         },
         {
           "id": "dish_014",
-          "name_en": "arachuvitta_sambar",
-          "name_ta": "அரச்சுவிட்ட சாம்பார்",
+          "name_en": "poosanikkai_arachuvitta_pitlai",
+          "name_ta": "பூசணிக்காய் அரச்சுவிட்ட சாம்பார் / பிட்லை",
           "dish_class_id": "dc_004",
           "family_id": "fam_004_002",
           "subfamily_id": null,
@@ -1682,22 +1688,24 @@
           "onion_flag": false,
           "garlic_flag": false,
           "ingredient_roles": {
-            "primary": [],
+            "primary": [
+              "veg_073"
+            ],
             "support": []
           },
           "is_placeholder": false,
           "placeholder_status": null,
-          "notes": "",
+          "notes": "Was generic arachuvitta_sambar (no veg); given poosanikkai per PK v1.5 merge.",
           "meal_role": "main_gravy",
           "can_lead": true,
           "meal_role_source": "class_default"
         },
         {
           "id": "dish_015",
-          "name_en": "katharikkai_pitlai",
-          "name_ta": "கத்தரிக்காய் பிட்லை",
+          "name_en": "katharikkai_arachuvitta_pitlai",
+          "name_ta": "கத்தரிக்காய் அரச்சுவிட்ட சாம்பார் / பிட்லை",
           "dish_class_id": "dc_004",
-          "family_id": "fam_004_003",
+          "family_id": "fam_004_002",
           "subfamily_id": null,
           "slot_fit": [
             "morning",
@@ -1713,17 +1721,17 @@
           },
           "is_placeholder": false,
           "placeholder_status": null,
-          "notes": "",
+          "notes": "Merged from pitlai family per PK v1.5.",
           "meal_role": "main_gravy",
           "can_lead": true,
           "meal_role_source": "class_default"
         },
         {
           "id": "dish_016",
-          "name_en": "pavarkkai_pitlai",
-          "name_ta": "பாகற்காய் பிட்லை",
+          "name_en": "pavarkkai_arachuvitta_pitlai",
+          "name_ta": "பாகற்காய் அரச்சுவிட்ட சாம்பார் / பிட்லை",
           "dish_class_id": "dc_004",
-          "family_id": "fam_004_003",
+          "family_id": "fam_004_002",
           "subfamily_id": null,
           "slot_fit": [
             "morning",
@@ -1739,7 +1747,7 @@
           },
           "is_placeholder": false,
           "placeholder_status": null,
-          "notes": "",
+          "notes": "Merged from pitlai family per PK v1.5.",
           "meal_role": "main_gravy",
           "can_lead": true,
           "meal_role_source": "class_default"

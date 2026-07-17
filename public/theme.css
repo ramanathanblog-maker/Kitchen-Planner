@@ -43,6 +43,49 @@
   }
 }
 
+/* Kiosk-only explicit theme (Step 3, Phase 4b amendment): the /display page sets
+   data-theme on <html> itself — light by default regardless of system preference,
+   dark once toggled — and these rules override prefers-color-scheme for it since
+   they come later in the cascade at equal specificity. No other page sets
+   data-theme, so every other page is unaffected and keeps following
+   prefers-color-scheme automatically. */
+:root[data-theme="light"] {
+  --bg: #FAF7F2;
+  --ink: #292524;
+  --border: rgb(0 0 0 / 8%);
+  --shadow: 0 1px 3px rgb(0 0 0 / 8%);
+}
+:root[data-theme="dark"] {
+  --bg: #1C1917;
+  --ink: #FAF7F2;
+  --border: rgb(255 255 255 / 10%);
+  --shadow: 0 1px 3px rgb(0 0 0 / 40%);
+}
+
+.theme-toggle {
+  position: fixed;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 10;
+  min-width: 44px;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.theme-toggle__icon:last-child { display: none; }
+:root[data-theme="dark"] .theme-toggle__icon:first-child { display: none; }
+:root[data-theme="dark"] .theme-toggle__icon:last-child { display: inline; }
+
 * { box-sizing: border-box; }
 
 html, body {

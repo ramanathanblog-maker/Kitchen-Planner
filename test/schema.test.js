@@ -27,6 +27,7 @@ test('migration applies cleanly and re-run is a no-op', () => {
       '003_taxonomy_v14.sql',
       '004_api_support.sql',
       '005_undo_source.sql',
+      '006_meal_patterns.sql',
     ]);
     const second = migrate(db);
     assert.deepEqual(second, []);

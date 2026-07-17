@@ -15,10 +15,12 @@ function pageShell({ title, activeTab = null, bodyHtml, kiosk = false, requireEd
 <link rel="stylesheet" href="/theme.css">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#3F6212">
+${kiosk ? kioskThemeInitScript() : ''}
 </head>
 <body${kiosk ? ' class="kiosk"' : ''}>
 ${requireEditor ? editorGuardScript() : ''}
 <main>
+${kiosk ? themeToggleButton() : ''}
 ${bodyHtml}
 </main>
 ${activeTab ? tabBar(activeTab) : ''}
@@ -38,6 +40,34 @@ function editorGuardScript() {
     }
   })();
 </script>`;
+}
+
+// Kiosk-only theming (Step 3 of the Phase 4b amendment): default light regardless
+// of system prefers-color-scheme, with a visible toggle that persists to
+// localStorage. Scoped to the kiosk page only — every other page keeps following
+// prefers-color-scheme automatically, unchanged (see DECISIONS.md). This inline
+// head script runs before first paint so there's no light-then-dark flash on load.
+function kioskThemeInitScript() {
+  return `<script>
+  (function () {
+    var saved = localStorage.getItem('kiosk-theme');
+    document.documentElement.setAttribute('data-theme', saved === 'dark' ? 'dark' : 'light');
+  })();
+</script>`;
+}
+
+function themeToggleButton() {
+  return `<button type="button" class="theme-toggle" aria-label="Toggle dark mode" onclick="
+    (function () {
+      var root = document.documentElement;
+      var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      localStorage.setItem('kiosk-theme', next);
+    })();
+  ">
+    <span aria-hidden="true" class="theme-toggle__icon">&#9788;</span>
+    <span aria-hidden="true" class="theme-toggle__icon">&#9790;</span>
+  </button>`;
 }
 
 function tabBar(activeTab) {

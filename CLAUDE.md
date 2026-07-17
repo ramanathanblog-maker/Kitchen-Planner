@@ -81,3 +81,11 @@ Live inventory/stock ledger · people/guest model, per-person allergies/likes, m
 4. Onion-sambar 20-day rule severity — seeded soft, PK to confirm hard vs soft.
 5. Support-role repetition assumption (Phase 2 step 4) — PK to confirm.
 6. Night-slot defaults — seeded "both allowed"; PK to confirm actual household night eating pattern.
+
+## Git discipline (binding): 
+   Commit to `main` and push to origin at every phase gate, before
+   reporting. Never use `git worktree` in this repo — a worktree clones committed state only,
+   so uncommitted work silently disappears from it. Never `git reset --hard`, `git clean -fd`,
+   or force-push. If uncommitted changes exist at the start of a session, commit them before
+   doing anything else and say so in the report. Verify with `git check-ignore -v` before
+   assuming any new source directory is tracked.
