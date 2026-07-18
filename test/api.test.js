@@ -68,6 +68,41 @@ test('GET /health reports real DB connectivity, migration version, and taxonomy 
   }
 });
 
+// Regression (Audit 2026-07-18, code #12): a JS-only deploy with no new
+// migration and no reseed was previously indistinguishable from the old
+// process still answering /health. git_commit/built_at close that gap,
+// sourced from GIT_COMMIT/BUILD_TIME env vars baked in at Docker build time
+// (never computed by running git inside the process).
+test('GET /health reports git_commit and built_at as "unknown" when the env vars are unset (e.g. local dev, no Docker build)', async () => {
+  const ctx = await startServer();
+  try {
+    delete process.env.GIT_COMMIT;
+    delete process.env.BUILD_TIME;
+    const res = await fetch(`${ctx.base}/health`);
+    const body = await res.json();
+    assert.equal(body.git_commit, 'unknown');
+    assert.equal(body.built_at, 'unknown');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('GET /health reports the real GIT_COMMIT/BUILD_TIME env var values when set', async () => {
+  const ctx = await startServer();
+  try {
+    process.env.GIT_COMMIT = 'abc1234';
+    process.env.BUILD_TIME = '2026-07-18T12:00:00Z';
+    const res = await fetch(`${ctx.base}/health`);
+    const body = await res.json();
+    assert.equal(body.git_commit, 'abc1234');
+    assert.equal(body.built_at, '2026-07-18T12:00:00Z');
+  } finally {
+    delete process.env.GIT_COMMIT;
+    delete process.env.BUILD_TIME;
+    await ctx.close();
+  }
+});
+
 test('GET /health reports db:error with a non-200 status when the DB is unreachable', async () => {
   const ctx = await startServer();
   try {

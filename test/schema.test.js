@@ -29,6 +29,7 @@ test('migration applies cleanly and re-run is a no-op', () => {
       '005_undo_source.sql',
       '006_meal_patterns.sql',
       '007_actual_meals_unique.sql',
+      '008_night_pattern.sql',
     ]);
     const second = migrate(db);
     assert.deepEqual(second, []);

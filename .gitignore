@@ -1,3 +1,9 @@
 node_modules/
 /data/
 *.log
+
+# Syncthing's per-folder marker directory — docs/ is also synced to another
+# device via Syncthing (see docs/OPERATIONS.md "Docs sync (Syncthing)
+# collision risk"); this directory is Syncthing's own bookkeeping, never
+# content to track.
+.stfolder/

@@ -47,7 +47,10 @@ test('meal_patterns settings row seeds via migration with the amendment §3 shap
     const sideGravy = patterns.noon.rows.find((r) => r.role === 'tiffin_side');
     assert.equal(sideGravy.offer_morning_carryover, true);
 
-    assert.deepEqual(patterns.night.rows, []);
+    // Migration 008 (Audit 2026-07-18, UX #1): night is no longer an empty
+    // dead end — a minimal interim free-pick pattern, explicitly provisional.
+    assert.ok(patterns.night.rows.length > 0);
+    assert.match(patterns.night.note, /interim|provisional/i);
 
     db.close();
   } finally {

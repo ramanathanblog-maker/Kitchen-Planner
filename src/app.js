@@ -46,6 +46,15 @@ function createApp(db) {
   // state) that once caused a stale-build misdiagnosis: a dead/old process kept
   // answering health checks as if everything were fine. This is also the Docker
   // HEALTHCHECK target, so a genuinely broken DB must fail it, not report ok.
+  //
+  // git_commit/built_at close the *other* half of that same failure class
+  // (Audit 2026-07-18, threat: stale-process masking): migration/taxonomy_sha
+  // prove the DB state, but a deploy that changes only JS with no new
+  // migration and no reseed was previously indistinguishable from the old
+  // process at /health. Sourced from GIT_COMMIT/BUILD_TIME env vars baked in
+  // at image build time (Dockerfile ARGs, see OPERATIONS.md "Deploy /
+  // build stamp") — never computed by running git inside the running
+  // container, which may not have git installed or a .git directory at all.
   app.get('/health', (req, res) => {
     try {
       db.prepare('SELECT 1').get();
@@ -58,6 +67,8 @@ function createApp(db) {
         migration,
         taxonomy_version: taxonomyVersion ? taxonomyVersion.value : null,
         taxonomy_json_sha256: taxonomySha256 ? taxonomySha256.value : null,
+        git_commit: process.env.GIT_COMMIT || 'unknown',
+        built_at: process.env.BUILD_TIME || 'unknown',
       });
     } catch (err) {
       res.status(503).json({ ok: false, db: 'error', error: err.message });

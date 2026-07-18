@@ -2,14 +2,27 @@
 # Port 3010 is reserved for this app — 3000 and 5433 are taken by NeoTrack dev on the same host.
 # Do NOT paste this file's own top-level `services:` key if the shared compose file
 # already has one — merge just the `kitchen-planner:` block underneath it.
+#
+# Before `docker compose build`, export the deploy/build stamp so GET /health
+# can report it (Audit 2026-07-18, threat: stale-process masking; see
+# OPERATIONS.md "Deploy / build stamp"):
+#   export GIT_COMMIT=$(git -C ~/homelab/kitchenplanner rev-parse --short HEAD)
+#   export BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+#   docker compose build kitchen-planner && docker compose up -d kitchen-planner
+# Omitting these is safe (both default to "unknown" in the Dockerfile) — the
+# build won't fail, /health just won't be able to prove which commit is running.
   kitchen-planner:
-    build: ./kitchen-planner
+    build:
+      context: ./kitchenplanner
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
     container_name: kitchen-planner
     restart: unless-stopped
     ports:
       - "${KITCHEN_PORT:-3010}:3010"
     volumes:
-      - ./kitchen-planner/data:/app/data
+      - ./kitchenplanner/data:/app/data
     environment:
       - NODE_ENV=production
       - KITCHEN_DB=/app/data/kitchen.db

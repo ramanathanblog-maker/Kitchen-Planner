@@ -7,12 +7,14 @@ This is the single ops runbook (CLAUDE.md A4: exactly one OPERATIONS.md, updated
 ## Contents
 - Start / stop
 - Migrate
+- Deploy / build stamp
 - Seed / taxonomy-update procedure
-- Backup / restore (incl. the executed drill transcript)
+- Backup / restore (incl. the executed drill transcript, and the backup preflight check)
 - Fresh-clone drill (proves the repo is self-contained)
 - Folder-copy migration to another host
 - Troubleshooting
 - Predator deployment
+- Docs sync (Syncthing) collision risk
 - §Smoke-Test (Phase 4, unchanged)
 
 ---
@@ -47,6 +49,28 @@ Migrations live in `/migrations/*.sql`, applied in filename order, tracked in th
 node src/db/migrate.js
 ```
 Safe to run any number of times — already-applied files are skipped. `GET /health`'s `migration` field reports the most recently applied filename, so after a deploy you can confirm the new migration actually landed without opening the DB by hand.
+
+---
+
+## Deploy / build stamp
+
+`migration` and `taxonomy_json_sha256` in `GET /health` prove the *data* a running process is serving from, but a deploy that changes only application code — no new migration file, no reseed — used to be indistinguishable from the old process still answering requests (this caused a real stale-build misdiagnosis; see Troubleshooting below). `git_commit` and `built_at` close that gap.
+
+Both fields are baked into the image at **build time** via Dockerfile `ARG`s (`GIT_COMMIT`, `BUILD_TIME`), never computed by running `git` inside the running container — the container has no git installed and the build context may not even include `.git`. `git` only needs to exist on the **host**, at the moment `docker compose build` runs:
+
+```
+cd ~/homelab
+export GIT_COMMIT=$(git -C kitchenplanner rev-parse --short HEAD)
+export BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+docker compose build kitchen-planner
+docker compose up -d kitchen-planner
+curl -s localhost:3010/health
+```
+Both env vars default to `"unknown"` in the Dockerfile if not exported before the build — a plain `docker compose build` (or `docker build .`) never fails for lacking them, `/health` just can't prove which commit is running until you set them.
+
+**Local (no Docker):** `git_commit`/`built_at` are also just `process.env.GIT_COMMIT`/`process.env.BUILD_TIME` — `node server.js` alone won't have them set (no Dockerfile ARG involved), so they'll read `"unknown"` locally. That's expected and not a bug; the stale-process problem this closes is specifically a Docker-redeploy scenario.
+
+To confirm a deploy actually replaced the running process, compare `git_commit` against `git log --oneline -1` on the host **before and after** the redeploy — if they don't change after a deploy that should have shipped new code, the old process (or an old image) is still the one answering.
 
 ---
 
@@ -87,10 +111,19 @@ Each `<name>.db` in the data dir is backed up to `data/backups/<name>-YYYY-MM-DD
 
 **Cron (PK's manual step — not installed by this script or by Claude):**
 ```
-# crontab -e, as the user that owns ~/homelab/kitchen-planner/data
-0 3 * * * cd ~/homelab/kitchen-planner && KITCHEN_DATA_DIR=./data ./scripts/backup.sh >> ./data/backups/backup.log 2>&1
+# crontab -e, as the user that owns ~/homelab/kitchenplanner/data
+0 3 * * * cd ~/homelab/kitchenplanner && KITCHEN_DATA_DIR=./data ./scripts/backup.sh >> ./data/backups/backup.log 2>&1
 ```
 Daily at 3am, log appended so a failed run is visible without cron's own mail setup. If running against the Dockerized deployment, either run the cron job on the host against the bind-mounted `./data` directory directly (works fine — SQLite doesn't care whether the reader is inside or outside the container, only that it uses the backup API, not a raw file copy of a live db), or `docker compose exec kitchen-planner ./scripts/backup.sh`.
+
+### Backup preflight — run this before trusting the cron
+
+`scripts/backup-preflight.sh` is a read-only check that the pieces above are actually in place: the `sqlite3` CLI is on `PATH`, the backup dir exists and is writable *by the user the cron job will run as*, at least one `*.db` file exists to back up, and a crontab entry referencing `backup.sh` exists and has a plausible field count (a cheap sanity check, not a full cron-syntax validator). It never installs, edits, or removes a crontab entry — only PK does that, per the Cron block above.
+
+```
+KITCHEN_DATA_DIR=./data ./scripts/backup-preflight.sh
+```
+Exits `0` if every check passes, `1` otherwise, so it's usable as a cron precondition or a monitoring check, not just an interactive read. Run it once right after setting up the cron line above, and again anytime `/health` or a restore surprises you — a `FAIL` on the writability check specifically is worth checking against `ls -la data/backups` first: the data directory is owned by the container's `kitchen` user (uid 999 in the image), so a host user outside that container (e.g. running this script directly on Predator, not via `docker compose exec`) may correctly and expectedly fail the writability check even though the *cron job itself* (running via `docker compose exec kitchen-planner`, i.e. as uid 999) would pass.
 
 ### Restore
 
@@ -266,7 +299,7 @@ $ curl -s "http://localhost:13012/api/plans?date=2026-07-25" -H "X-Editor: PK"
 The whole app is one directory + one SQLite file (well, `*.db` files, plural after Phase 6) — no external DB server, no separate config store beyond `.env`/`KITCHEN_DB`/`KITCHEN_PORT`. To move it:
 
 1. On the old host: stop the container (`docker compose stop kitchen-planner`), then `./scripts/backup.sh` for a clean snapshot (or just `cp` the `.db` files once the process is confirmed stopped and not writing).
-2. `rsync -a` (or `scp -r`) the whole `~/homelab/kitchen-planner/` directory — code and `data/` both — to the new host at the same relative path under its own `~/homelab/`.
+2. `rsync -a` (or `scp -r`) the whole `~/homelab/kitchenplanner/` directory — code and `data/` both — to the new host at the same relative path under its own `~/homelab/`.
 3. On the new host: `docker compose build kitchen-planner && docker compose up -d kitchen-planner` (merge the `kitchen-planner:` block from `docker-compose.snippet.yml` into the new host's compose file first, same as the initial Predator deploy below).
 4. `curl localhost:${KITCHEN_PORT:-3010}/health` — confirm `db:"ready"`, and that `migration`/`taxonomy_version` match what the old host reported before the move (nothing should have changed in transit; if `migration` is *older* than expected, the new host's image predates a migration file that was already applied on the old host's data — rebuild the image from the same commit as the old host was running).
 
@@ -290,9 +323,11 @@ No database export/import step, no schema translation — the `.db` file *is* th
 
 **Environment:** Dell OptiPlex 7060, bare-metal Ubuntu Server + Docker. LAN `192.168.78.x`. Kitchen Planner is reserved port **3010** (3000 and 5433 are taken by NeoTrack dev on the same host — see the root `CLAUDE.md`).
 
-**Compose merge (PK's manual step):** copy the `kitchen-planner:` service block from this repo's `docker-compose.snippet.yml` into `~/homelab/docker-compose.yml`'s existing `services:` section (do not paste a second top-level `services:` key). The build context (`build: ./kitchen-planner`) assumes this repo is checked out at `~/homelab/kitchen-planner/` — adjust the path if it lives elsewhere. Then:
+**Compose merge (PK's manual step):** copy the `kitchen-planner:` service block from this repo's `docker-compose.snippet.yml` into `~/homelab/docker-compose.yml`'s existing `services:` section (do not paste a second top-level `services:` key). The build context (`build.context: ./kitchenplanner`) assumes this repo is checked out at `~/homelab/kitchenplanner/` (no hyphen — the service/container *name* is `kitchen-planner`, hyphenated, but the directory on disk is not; an earlier version of this snippet had `./kitchen-planner` here and would fail to build against a real checkout) — adjust the path if it lives elsewhere. Then, to also populate `GET /health`'s `git_commit`/`built_at` fields (see "Deploy / build stamp" below):
 ```
 cd ~/homelab
+export GIT_COMMIT=$(git -C kitchenplanner rev-parse --short HEAD)
+export BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 docker compose up -d --build kitchen-planner
 curl localhost:3010/health
 ```
@@ -302,6 +337,17 @@ curl localhost:3010/health
 **Homepage widget:** point a custom-API widget at `http://<predator-LAN-IP>:3010/api/display/today` and `/api/display/shopping` — both are deliberately mounted outside `editorMiddleware` (no `X-Editor` header required), since the dashboard has no household member sitting at a keyboard to pick an identity. `/api/display/today` returns the day's planned/actual/none status per slot; `/api/display/shopping` returns the tomorrow/week ingredient roll-up (today's date is never included in either — see `MANUAL.md`'s shopping-list note).
 
 **Kiosk display:** `http://<predator-LAN-IP>:3010/display` is the full-page, auto-refreshing kiosk view (same underlying data as the Homepage widgets, rendered as a standalone page) — point the dashboard monitor's browser at this URL directly rather than embedding it, if a full-screen view is preferred over the Homepage widget tiles.
+
+---
+
+## Docs sync (Syncthing) collision risk
+
+`~/homelab/docker-compose.yml` also syncs this repo's `docs/` directory to another device via Syncthing (`docs/.stfolder/` is Syncthing's own per-folder marker directory, git-ignored per this repo's `.gitignore`, never committed). That means `docs/` is simultaneously a tracked directory inside a git repo *and* a Syncthing sync folder — two independent change-propagation mechanisms over the same files, which is a real collision surface, not just a theoretical one (Audit 2026-07-18, code #12):
+
+- A remote device editing or deleting a synced doc propagates into this repo's working tree as an ordinary filesystem change — indistinguishable from a local edit to `git status`. A careless `git add -A` / `git commit` after that will happily commit (or commit-as-deleted) someone else's Syncthing-side change as if it were intentional local work.
+- A sync conflict (two devices editing the same file while offline from each other) produces a `*.sync-conflict-<date>-<device>.<ext>` file *inside* the repo directory — an untracked file that `git status` will show and that a broad `git add -A` will happily stage and commit if not noticed.
+
+**Mitigation, not full elimination:** always run `git status` before staging anything in `docs/`, and treat any unfamiliar file matching `*.sync-conflict-*` as a signal to resolve the Syncthing conflict first (on whichever device has the intended content), not to blindly `git add` it. This is the same "investigate before committing" discipline the root `CLAUDE.md` already requires for unfamiliar files generally — called out explicitly here because `docs/` is the one directory in this repo where it's structurally likely to happen, not just possible.
 
 ---
 

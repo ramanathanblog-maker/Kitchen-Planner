@@ -34,10 +34,45 @@
   --tab-bar-height: 64px;
 }
 
+/* Dark-mode token pass (Audit 2026-07-18, UX #9). Before this, only
+   --bg/--ink/--border/--shadow flipped for dark mode — --accent, --info, and
+   the three *-tint chip backgrounds kept their light-mode values, which broke
+   real contrast ratios (WCAG AA text minimum is 4.5:1; computed with the
+   standard relative-luminance formula against each token's actual paint
+   context, not eyeballed):
+     - `a { color: var(--accent) }` on `--bg`: 6.62:1 in light, only 2.47:1 in
+       dark (fails) with the unmodified light accent — every link on a dark
+       page was close to unreadable.
+     - `.dish-card__family`/`.chip--allowed` text (`--info`) on their actual
+       backgrounds (a dish-card, or that chip's `rgb(0 0 0 / 5%)` overlay atop
+       a dish-card): 7.58:1 / 6.77:1 in light, 2.00:1 / 2.05:1 in dark (both fail).
+   Fixed by giving --accent/--info lighter dark-mode values and re-checking
+   against every context they actually paint into:
+     - --accent (dark, #84CC16) vs --bg (dark): 8.85:1.
+     - --accent (dark) vs the new --accent-tint (dark, #1A2E05) — chip--preferred
+       text on its own chip background: 7.40:1.
+     - --info (dark, #94A3B8) vs --bg (dark): 6.82:1. Vs a dish-card's dark
+       background (#292524): 5.92:1. Vs chip--allowed's composited
+       `rgb(0 0 0 / 5%)`-over-dark-card background (#272322): 6.07:1.
+   --warn-tint and --blocked-tint are deliberately left at their light-mode
+   values in dark mode, not darkened — --warn/--blocked (the chip text paired
+   with them) are outside this pass's scope, and the math rules out any dark
+   background working with them unchanged: even pure black (#000) only gets
+   --warn to 4.18:1 and --blocked to 3.25:1 against it — both already below the
+   4.5:1 floor before considering anything less extreme. Their light pastel
+   values (chip--avoid 4.51:1, chip--blocked 5.30:1) already pass and are
+   self-contained pill backgrounds independent of the page's own bg/ink, so
+   leaving them as-is is the correct call, not an oversight — declared
+   explicitly below so a future reader sees a decision, not a gap. */
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #1C1917;
     --ink: #FAF7F2;
+    --accent: #84CC16;
+    --accent-tint: #1A2E05;
+    --warn-tint: #FEF3C7;
+    --blocked-tint: #FEE2E2;
+    --info: #94A3B8;
     --border: rgb(255 255 255 / 10%);
     --shadow: 0 1px 3px rgb(0 0 0 / 40%);
   }
@@ -48,16 +83,28 @@
    dark once toggled — and these rules override prefers-color-scheme for it since
    they come later in the cascade at equal specificity. No other page sets
    data-theme, so every other page is unaffected and keeps following
-   prefers-color-scheme automatically. */
+   prefers-color-scheme automatically. Carries the same dark-mode token values
+   as the @media block above — see that comment for the checked contrast ratios,
+   which apply identically here since it's the same color set. */
 :root[data-theme="light"] {
   --bg: #FAF7F2;
   --ink: #292524;
+  --accent: #3F6212;
+  --accent-tint: #ECFCCB;
+  --warn-tint: #FEF3C7;
+  --blocked-tint: #FEE2E2;
+  --info: #475569;
   --border: rgb(0 0 0 / 8%);
   --shadow: 0 1px 3px rgb(0 0 0 / 8%);
 }
 :root[data-theme="dark"] {
   --bg: #1C1917;
   --ink: #FAF7F2;
+  --accent: #84CC16;
+  --accent-tint: #1A2E05;
+  --warn-tint: #FEF3C7;
+  --blocked-tint: #FEE2E2;
+  --info: #94A3B8;
   --border: rgb(255 255 255 / 10%);
   --shadow: 0 1px 3px rgb(0 0 0 / 40%);
 }
@@ -155,6 +202,16 @@ main {
   color: #fff;
   border-color: var(--accent);
 }
+/* --accent's dark-mode value (#84CC16, lightened for link/text legibility —
+   see the dark-mode token pass comment above) is far too bright to double as
+   a solid button fill under white text: 1.98:1, fails badly (checked the same
+   way as everything else in that pass, not assumed). A solid-fill button
+   doesn't need to track the page's light/dark ink at all — its own fixed
+   green already contrasts fine with white text (7.08:1) regardless of theme
+   — so .btn-primary pins its background/border to the original light-mode
+   accent value in both dark contexts instead of inheriting the token. */
+@media (prefers-color-scheme: dark) { .btn-primary { background: #3F6212; border-color: #3F6212; } }
+:root[data-theme="dark"] .btn-primary { background: #3F6212; border-color: #3F6212; }
 
 /* ---------- Dish card ---------- */
 .dish-card {

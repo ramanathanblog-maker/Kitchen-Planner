@@ -516,13 +516,45 @@ test('Sambar row (two families) still shows its family-choice screen, not collap
   }
 });
 
-test('night hub has empty rows (unspecified pattern, amendment §10.1)', () => {
+// Regression (Audit 2026-07-18, UX #1 / migration 008): night used to have an
+// empty `rows: []` pattern (amendment §10.1's own open item) with no fallback
+// UI, a hard dead end for night planning. It now carries a minimal interim
+// free-pick pattern — provisional, but usable — with a `note` explaining that.
+test('night hub has a minimal interim free-pick pattern, not an empty dead end, and surfaces its provisional note', () => {
   const { db, dbPath } = tmpDb();
   try {
     const hub = wizard.getHubData(db, { date: '2026-07-20', slot: 'night' });
-    assert.deepEqual(hub.rows, []);
+    assert.ok(hub.rows.length > 0, 'night must no longer be a hard dead end');
+    assert.ok(hub.note && /interim|provisional/i.test(hub.note), 'the interim status must be documented in the note surfaced to the hub');
+    for (const row of hub.rows) {
+      assert.ok(Number.isInteger(row.max) && row.max >= 1, `row ${row.role} must have a valid max`);
+    }
   } finally {
     db.close();
     cleanup(dbPath);
+  }
+});
+
+test('night hub HTML renders the interim-pattern note as a visible banner', async () => {
+  const ctx = await startServer();
+  try {
+    const res = await fetch(`${ctx.base}/plan/2026-07-20/night`);
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /interim|provisional/i);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('night hub actually offers candidate dishes for its interim roles (main_gravy has night-eligible items in the seeded taxonomy)', async () => {
+  const ctx = await startServer();
+  try {
+    const res = await fetch(`${ctx.base}/plan/2026-07-20/night/main_gravy`);
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /Choose/, 'expected at least one choosable candidate for the night main_gravy row');
+  } finally {
+    await ctx.close();
   }
 });

@@ -76,6 +76,7 @@ function renderWizardHub(hub, { locked = false, editor = null } = {}) {
     </div>
     ${compositionWarning ? `<div class="composition-banner" role="status" aria-live="polite">${escapeHtml(compositionWarning.message)}</div>` : ''}
     ${locked ? `<div class="composition-banner" role="status" aria-live="polite">past days are locked — ask PK to change this</div>` : ''}
+    ${hub.note ? `<div class="composition-banner" role="status" aria-live="polite">${escapeHtml(hub.note)}</div>` : ''}
     ${visibleRows.map((r) => rowHtml(date, slot, r, locked)).join('\n')}
     <div class="sheet__footer" style="position:static; margin-top: var(--space-4);">
       <a class="btn btn-primary" style="width:100%; display:block; text-align:center;" href="/plan">Save day</a>
