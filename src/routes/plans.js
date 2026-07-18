@@ -48,6 +48,20 @@ function simpleCrudRouter(db, table) {
     assertRequired(body, ['date', 'slot', 'dish_item_id']);
     assertInDomain(body.slot, 'slot', 'slot');
     if (table === 'plans') assertPlanEditable(req.editor, body.date);
+
+    // actual_meals has a UNIQUE(date, slot, dish_item_id) index (migration 007).
+    // A repeat POST — a double-tap, or a client retry after a network blip — is
+    // idempotent: it returns the already-recorded row (200, not 201) rather than
+    // erroring or creating a duplicate that would skew the engine's repeat-gap
+    // history. Same "skip if already recorded" precedent as the day-level
+    // POST /api/plans/:date/serve (src/routes/serve.js). Audit 2026-07-18, code #8.
+    if (table === 'actual_meals') {
+      const existing = db
+        .prepare('SELECT * FROM actual_meals WHERE date = ? AND slot = ? AND dish_item_id = ?')
+        .get(body.date, body.slot, body.dish_item_id);
+      if (existing) return res.status(200).json(existing);
+    }
+
     const cols = fields.filter((f) => body[f] !== undefined);
     const row = db.transaction(() => {
       const info = db

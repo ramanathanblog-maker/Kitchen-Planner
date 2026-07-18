@@ -87,7 +87,7 @@ function pageRouter(db) {
     if (!Number.isInteger(familyId)) throw new ApiError(400, 'familyId must be an integer');
 
     const allItems = candidateItemsForRole(db, { slot, role: row.role, filterClass: row.filter_class });
-    const items = allItems.filter((i) => i.family_id === familyId).slice(0, 10);
+    const items = allItems.filter((i) => i.family_id === familyId);
     if (items.length === 0) throw new ApiError(404, 'no items for this family/role/slot combination');
     const evaluated = evaluateItemsForLeaf(db, { date, slot, items });
     res.type('html').send(renderWizardItems({ date, slot, row, rowSlug: slug, familyId, familyName: items[0].family_name, items: evaluated }));

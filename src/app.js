@@ -7,7 +7,7 @@ const express = require('express');
 const { renderStyleguide } = require('./views/styleguide');
 const { currentVersion } = require('./db/migrate');
 const { editorMiddleware } = require('./routes/editor');
-const { errorHandler } = require('./routes/errors');
+const { errorHandler, pageErrorHandler } = require('./routes/errors');
 const { ingredientsRouter } = require('./routes/ingredients');
 const { familiesRouter } = require('./routes/families');
 const { itemsRouter } = require('./routes/items');
@@ -105,6 +105,13 @@ function createApp(db) {
     const shopping = getDisplayShoppingData(db);
     res.type('html').send(renderKiosk({ today, shopping }));
   });
+
+  // HTML error page for every page route above (Today/Plan/Shopping/Knowledge/
+  // Special Days/the wizard/the kiosk) — must be mounted after them and before
+  // any /api route below, so a thrown error there never leaks a raw Express
+  // stack trace to a household member's phone (Audit 2026-07-18, code #5).
+  // /api's own JSON errorHandler (mounted at the bottom of this file) is separate.
+  app.use(pageErrorHandler);
 
   // Mounted before the editor gate below: read-only, no identity required (spec
   // Phase 3 §3). Must not go through editorMiddleware.

@@ -12,6 +12,15 @@ const { pageShell, jsonForAttr, escapeHtml } = require('./layout');
 // at all — Save reads the live form values straight off the DOM via
 // closest('.dish-card'), so there's no reactive state to get out of sync with
 // the initial paint in the first place.
+//
+// The Add-rule pickers further down this file used to have the same
+// `<template x-for>`-inside-a-`<select>` shape (options cloned client-side from
+// JSON, x-model on the select) — lower stakes than the rule cards since these
+// are "add new" pickers with a JS-state default rather than a per-row DB value
+// to invert, but it was the exact banned pattern on the same page as this
+// comment (Audit 2026-07-18, code #1). Converted to server-rendered <option>s
+// (optionsHtmlFor below) with no x-for involved; see scripts/lint-alpine-select.js
+// for the guardrail against this pattern reappearing anywhere in src/views.
 const VERDICT_OPTIONS = ['preferred', 'allowed', 'avoid', 'never', 'unsure'];
 const SEVERITY_OPTIONS = ['soft', 'hard'];
 
@@ -19,6 +28,17 @@ function optionsHtml(options, selected) {
   return options
     .map((o) => `<option value="${o}"${o === selected ? ' selected' : ''}>${o}</option>`)
     .join('');
+}
+
+// Server-rendered <option> list for the Add-rule pickers below — same reasoning
+// as optionsHtml above (and the file-header comment): a `<template x-for>` of
+// `<option>`s inside an `x-model` `<select>` is the pattern that caused the P0
+// verdict-inversion bug on the rule cards. These pickers don't carry a per-row
+// `selected` (they're "add new", not "edit existing"), but the fix is the same
+// either way — no cloned-template options inside a select on this page, full
+// stop (Audit 2026-07-18, code #1).
+function optionsHtmlFor(rows, valueKey, labelKey) {
+  return rows.map((r) => `<option value="${escapeHtml(String(r[valueKey]))}">${escapeHtml(String(r[labelKey]))}</option>`).join('');
 }
 
 function ingredientRuleCard(rule) {
@@ -51,16 +71,17 @@ function renderKnowledge(data) {
   // Only the fields the client actually reads get embedded — data.
   // ingredients/families/items (72+57+191 rows) exist in `data` for other callers
   // of getKnowledgeData but must not be shipped to the client unused; embedding
-  // full rows bloated this page to ~190KB for zero benefit. The add-rule pickers
-  // need id+name pairs only, so those stay small even at full row counts.
+  // full rows bloated this page to ~190KB for zero benefit. The add-rule
+  // pickers' options are server-rendered directly below (see optionsHtmlFor,
+  // same reasoning as the rule cards' comment above) rather than re-sent as JSON
+  // for a client-side x-for, so the raw arrays never need to reach the client at
+  // all — smaller payload, and no `<template x-for>` + `<select>` combination on
+  // this page to invert a selection on (Audit 2026-07-18, code #1).
   const clientData = {
     ingredientRuleVersions: Object.fromEntries(data.ingredientRules.map((r) => [r.id, r.version])),
     repeatRuleVersions: Object.fromEntries(data.repeatRules.map((r) => [r.id, r.version])),
     events: data.events,
     placeholders: data.placeholders,
-    ingredients: data.ingredients.map((i) => ({ id: i.id, name_en: i.name_en })),
-    families: data.families.map((f) => ({ id: f.id, name_en: f.name_en })),
-    items: data.items.map((i) => ({ id: i.id, name_en: i.name_en })),
   };
   const body = `
   <div x-data="knowledgeView(${jsonForAttr(clientData)})">
@@ -78,14 +99,14 @@ function renderKnowledge(data) {
         <strong>Add rule</strong>
         <select x-model.number="newIngredientRule.ingredient_id">
           <option value="" disabled selected>Ingredient…</option>
-          <template x-for="i in ingredients" :key="i.id"><option :value="i.id" x-text="i.name_en"></option></template>
+          ${optionsHtmlFor(data.ingredients, 'id', 'name_en')}
         </select>
         <select x-model.number="newIngredientRule.family_id">
           <option value="" disabled selected>Dish family…</option>
-          <template x-for="f in families" :key="f.id"><option :value="f.id" x-text="f.name_en"></option></template>
+          ${optionsHtmlFor(data.families, 'id', 'name_en')}
         </select>
         <select x-model="newIngredientRule.verdict">
-          <template x-for="v in verdictOptions" :key="v"><option :value="v" x-text="v"></option></template>
+          ${optionsHtml(VERDICT_OPTIONS, 'unsure')}
         </select>
         <textarea x-model="newIngredientRule.note" placeholder="note"></textarea>
         <button class="btn btn-primary" @click="addIngredientRule()">Add rule</button>
@@ -98,11 +119,11 @@ function renderKnowledge(data) {
         <strong>Add rule</strong>
         <select x-model.number="newRepeatRule.dish_item_id">
           <option value="" disabled selected>Dish…</option>
-          <template x-for="i in items" :key="i.id"><option :value="i.id" x-text="i.name_en"></option></template>
+          ${optionsHtmlFor(data.items, 'id', 'name_en')}
         </select>
         <label>Min gap days <input type="number" x-model.number="newRepeatRule.min_gap_days" value="3"></label>
         <select x-model="newRepeatRule.severity">
-          <template x-for="s in severityOptions" :key="s"><option :value="s" x-text="s"></option></template>
+          ${optionsHtml(SEVERITY_OPTIONS, 'soft')}
         </select>
         <button class="btn btn-primary" @click="addRepeatRule()">Add rule</button>
       </div>
@@ -148,11 +169,6 @@ function renderKnowledge(data) {
         repeatRuleVersions: initial.repeatRuleVersions,
         events: initial.events,
         placeholders: initial.placeholders,
-        ingredients: initial.ingredients,
-        families: initial.families,
-        items: initial.items,
-        verdictOptions: ${JSON.stringify(VERDICT_OPTIONS)},
-        severityOptions: ${JSON.stringify(SEVERITY_OPTIONS)},
         newIngredientRule: { ingredient_id: '', family_id: '', verdict: 'unsure', note: '' },
         newRepeatRule: { dish_item_id: '', min_gap_days: 3, severity: 'soft' },
         confirmDeleteRule: null,

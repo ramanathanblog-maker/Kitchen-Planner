@@ -48,7 +48,10 @@ function renderKiosk({ today, shopping }) {
           // wall-mounted kiosk — on any failure, or once the date rolls over
           // past what was server-rendered, just do a full reload (cheap, and
           // guarantees a fresh server-render) instead of patching the DOM by hand.
-          const nowDate = new Date().toISOString().slice(0, 10);
+          // IST is a fixed UTC+5:30 offset (no DST) — matches src/data/dates.js
+          // todayStr() server-side, so the kiosk rolls over at IST midnight, not
+          // whenever the browser's own (possibly non-IST) local clock rolls over.
+          const nowDate = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
           if (nowDate !== renderedForDate) { window.location.reload(); return; }
           try {
             // Pre-flight reachability check before reloading: a bare

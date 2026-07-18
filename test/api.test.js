@@ -7,6 +7,7 @@ const { openDb } = require('../src/db/connection');
 const { migrate } = require('../src/db/migrate');
 const { seed } = require('../seed/load');
 const { createApp } = require('../src/app');
+const { todayStr: appTodayStr } = require('../src/data/dates');
 
 function tmpDbPath() {
   return path.join(os.tmpdir(), `kp-api-test-${process.pid}-${Math.random().toString(36).slice(2)}.db`);
@@ -416,6 +417,90 @@ test('POST /api/plans/:date/serve copies planned dishes to actual_meals, idempot
   }
 });
 
+// Regression (Audit 2026-07-18, code #8): the Today page's "Log as eaten" used
+// to loop one POST /api/actual_meals call per planned dish client-side, with no
+// transaction — a mid-loop failure could leave a slot half-logged. This single
+// route does the whole slot in one db.transaction() server-side.
+test('POST /api/plans/:date/:slot/log copies only that slot\'s planned dishes to actual_meals, idempotently, in one transaction', async () => {
+  const ctx = await startServer();
+  try {
+    const morningDish = ctx.db.prepare("SELECT id FROM dish_items WHERE external_id = 'dish_002'").get();
+    const noonDish = ctx.db.prepare("SELECT id FROM dish_items WHERE external_id = 'dish_078'").get();
+    await fetch(`${ctx.base}/api/plans`, {
+      method: 'POST',
+      headers: pk(),
+      body: JSON.stringify({ date: '2026-07-16', slot: 'morning', dish_item_id: morningDish.id }),
+    });
+    await fetch(`${ctx.base}/api/plans`, {
+      method: 'POST',
+      headers: pk(),
+      body: JSON.stringify({ date: '2026-07-16', slot: 'noon', dish_item_id: noonDish.id }),
+    });
+
+    const logRes = await fetch(`${ctx.base}/api/plans/2026-07-16/morning/log`, { method: 'POST', headers: pk() });
+    assert.equal(logRes.status, 200);
+    const body = await logRes.json();
+    assert.equal(body.created.length, 1);
+    assert.equal(body.created[0].slot, 'morning');
+
+    // noon was never logged — the route is slot-scoped, not day-scoped.
+    const noonActual = ctx.db.prepare("SELECT COUNT(*) c FROM actual_meals WHERE date='2026-07-16' AND slot='noon'").get().c;
+    assert.equal(noonActual, 0);
+
+    const logAgainRes = await fetch(`${ctx.base}/api/plans/2026-07-16/morning/log`, { method: 'POST', headers: pk() });
+    const bodyAgain = await logAgainRes.json();
+    assert.equal(bodyAgain.created.length, 0, 'second log is a no-op for the same slot');
+
+    const morningActualCount = ctx.db.prepare("SELECT COUNT(*) c FROM actual_meals WHERE date='2026-07-16' AND slot='morning'").get().c;
+    assert.equal(morningActualCount, 1);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('POST /api/plans/:date/:slot/log rejects an unknown slot', async () => {
+  const ctx = await startServer();
+  try {
+    const res = await fetch(`${ctx.base}/api/plans/2026-07-16/brunch/log`, { method: 'POST', headers: pk() });
+    assert.equal(res.status, 400);
+  } finally {
+    await ctx.close();
+  }
+});
+
+// Regression (Audit 2026-07-18, code #8): actual_meals now has a
+// UNIQUE(date, slot, dish_item_id) index (migration 007). POST is idempotent
+// against it — a double-tap on "Log as eaten" (via the override sheet's direct
+// markEaten call, not the slot-log route above) returns the existing row
+// instead of erroring or duplicating.
+test('POST /api/actual_meals with a duplicate (date, slot, dish_item_id) returns the existing row, does not duplicate', async () => {
+  const ctx = await startServer();
+  try {
+    const dish = ctx.db.prepare("SELECT id FROM dish_items WHERE external_id = 'dish_002'").get();
+    const first = await fetch(`${ctx.base}/api/actual_meals`, {
+      method: 'POST',
+      headers: pk(),
+      body: JSON.stringify({ date: '2026-07-16', slot: 'morning', dish_item_id: dish.id }),
+    });
+    assert.equal(first.status, 201);
+    const firstBody = await first.json();
+
+    const second = await fetch(`${ctx.base}/api/actual_meals`, {
+      method: 'POST',
+      headers: pk(),
+      body: JSON.stringify({ date: '2026-07-16', slot: 'morning', dish_item_id: dish.id }),
+    });
+    assert.equal(second.status, 200, 'a repeat POST is idempotent, not an error');
+    const secondBody = await second.json();
+    assert.equal(secondBody.id, firstBody.id);
+
+    const count = ctx.db.prepare("SELECT COUNT(*) c FROM actual_meals WHERE date='2026-07-16' AND slot='morning' AND dish_item_id=?").get(dish.id).c;
+    assert.equal(count, 1);
+  } finally {
+    await ctx.close();
+  }
+});
+
 test('GET /api/shopping de-duplicates ingredients and splits tomorrow vs week', async () => {
   const ctx = await startServer();
   try {
@@ -486,8 +571,10 @@ test('leftover_flag excludes an ingredient from to_buy and puts it in have_lefto
   }
 });
 
+// Delegates to the app's real (IST-aware) todayStr so test-constructed "today"
+// fixtures stay aligned with what the app under test actually considers today.
 function todayStr() {
-  return new Date().toISOString().slice(0, 10);
+  return appTodayStr();
 }
 function addDaysStr(dateStr, days) {
   const d = new Date(`${dateStr}T00:00:00Z`);
@@ -600,7 +687,7 @@ test('special_day_types/dates/assignments CRUD happy path, and the special day i
     assert.equal(typeRes.status, 201);
     const type = await typeRes.json();
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = appTodayStr();
     const dateRes = await fetch(`${ctx.base}/api/special_day_dates`, {
       method: 'POST',
       headers: pk(),

@@ -225,7 +225,7 @@ test('Skip is offered on every configured row\'s drill page', async () => {
   }
 });
 
-test('Drill gravy -> sambar family: item list is bounded (<=10) and contains only that family\'s items', async () => {
+test('Drill gravy -> sambar family: item list contains exactly and only that family\'s items', async () => {
   const ctx = await startServer();
   try {
     const sambarFamily = ctx.db.prepare("SELECT id FROM dish_families WHERE external_id = 'fam_004_001'").get();
@@ -233,8 +233,41 @@ test('Drill gravy -> sambar family: item list is bounded (<=10) and contains onl
     assert.equal(res.status, 200);
     const html = await res.text();
     const itemRows = ctx.db.prepare('SELECT name_en FROM dish_items WHERE family_id = ?').all(sambarFamily.id);
-    assert.ok(itemRows.length <= 10);
     for (const it of itemRows) assert.ok(html.includes(it.name_en));
+  } finally {
+    await ctx.close();
+  }
+});
+
+// Regression (Audit 2026-07-18, code #4): the drill leaf route used to
+// `.slice(0, 10)` its item list, silently making any item past the 10th
+// unreachable through the wizard — the sole planning entry point. Two seeded
+// families exceed 10 items; both must render in full.
+test('Drill noon Tiffin -> north_indian_tiffin family: all 14 items are reachable, none truncated', async () => {
+  const ctx = await startServer();
+  try {
+    const family = ctx.db.prepare("SELECT id FROM dish_families WHERE external_id = 'subfam_014_013'").get();
+    const itemRows = ctx.db.prepare('SELECT name_en FROM dish_items WHERE family_id = ?').all(family.id);
+    assert.equal(itemRows.length, 14, 'test assumption: north_indian_tiffin has 14 items in the seeded taxonomy');
+    const res = await fetch(`${ctx.base}/plan/2026-07-20/noon/tiffin_main/${family.id}`);
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    for (const it of itemRows) assert.ok(html.includes(it.name_en), `expected ${it.name_en} in the rendered drill page`);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('Drill noon Side/Gravy -> sides_gravy_family: all 11 items are reachable, none truncated', async () => {
+  const ctx = await startServer();
+  try {
+    const family = ctx.db.prepare("SELECT id FROM dish_families WHERE external_id = 'fam_015_001'").get();
+    const itemRows = ctx.db.prepare('SELECT name_en FROM dish_items WHERE family_id = ?').all(family.id);
+    assert.equal(itemRows.length, 11, 'test assumption: sides_gravy_family has 11 items in the seeded taxonomy');
+    const res = await fetch(`${ctx.base}/plan/2026-07-20/noon/tiffin_side/${family.id}`);
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    for (const it of itemRows) assert.ok(html.includes(it.name_en), `expected ${it.name_en} in the rendered drill page`);
   } finally {
     await ctx.close();
   }

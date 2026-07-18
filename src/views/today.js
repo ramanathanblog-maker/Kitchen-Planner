@@ -104,16 +104,13 @@ function renderToday(todayData) {
         // P2d — the primary one-tap action: log every already-planned dish in this
         // slot as eaten, as-is, without opening the override sheet at all.
         // "Make changes" (openOverride) remains the secondary path for alterations.
+        // One request, server-side transaction (POST /api/plans/:date/:slot/log,
+        // src/routes/serve.js) — not a client-side loop of one POST per dish, so a
+        // mid-loop failure (slow WiFi, a dropped connection) can never leave the
+        // slot half-logged (Audit 2026-07-18, code #8).
         async logSlotAsPlanned(slotKey) {
-          const dishes = this.slots[slotKey].dishes;
-          for (const d of dishes) {
-            const res = await kpFetch('/api/actual_meals', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ date: this.date, slot: slotKey, dish_item_id: d.id }),
-            });
-            if (!res.ok) return;
-          }
+          const res = await kpFetch('/api/plans/' + this.date + '/' + slotKey + '/log', { method: 'POST' });
+          if (!res.ok) return;
           window.location.reload();
         },
         // P2e — remove a single already-chosen dish directly (plans row if still

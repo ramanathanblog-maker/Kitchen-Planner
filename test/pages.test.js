@@ -13,6 +13,7 @@ const { openDb } = require('../src/db/connection');
 const { migrate } = require('../src/db/migrate');
 const { seed } = require('../seed/load');
 const { createApp } = require('../src/app');
+const { todayStr } = require('../src/data/dates');
 
 function tmpDbPath() {
   return path.join(os.tmpdir(), `kp-pages-test-${process.pid}-${Math.random().toString(36).slice(2)}.db`);
@@ -78,7 +79,7 @@ test('GET / (Today) is truly server-rendered: a planned dish name is present in 
   const ctx = await startServer();
   try {
     const dish = ctx.db.prepare("SELECT id, name_en FROM dish_items WHERE external_id = 'dish_002'").get();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
     ctx.db.prepare("INSERT INTO plans (date, slot, dish_item_id) VALUES (?, 'morning', ?)").run(today, dish.id);
 
     const html = await (await fetch(`${ctx.base}/`)).text();
@@ -145,7 +146,7 @@ test('GET /display (kiosk) is truly server-rendered: today\'s planned dish appea
   const ctx = await startServer();
   try {
     const dish = ctx.db.prepare("SELECT id, name_en FROM dish_items WHERE external_id = 'dish_002'").get();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
     ctx.db.prepare("INSERT INTO plans (date, slot, dish_item_id) VALUES (?, 'morning', ?)").run(today, dish.id);
 
     const html = await (await fetch(`${ctx.base}/display`)).text();
@@ -205,7 +206,7 @@ test('Today page end-to-end: pick an editor, plan a dish, load Today, mark day a
   const ctx = await startServer();
   try {
     const dish = ctx.db.prepare("SELECT id FROM dish_items WHERE external_id = 'dish_002'").get();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
 
     // Simulate what the editor-picker's client JS does: set the cookie, then all
     // subsequent same-origin fetches (including these test ones) carry it.
@@ -241,7 +242,7 @@ test('Today page: logging a slot as eaten (one-tap "as-is" path) copies planned 
   const ctx = await startServer();
   try {
     const dish = ctx.db.prepare("SELECT id, name_en FROM dish_items WHERE external_id = 'dish_002'").get();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
     const cookie = 'editor=PK';
 
     const planRes = await fetch(`${ctx.base}/api/plans`, {
@@ -257,14 +258,16 @@ test('Today page: logging a slot as eaten (one-tap "as-is" path) copies planned 
     assert.match(todayHtml, /Log as eaten/);
     assert.match(todayHtml, /Make changes/);
 
-    // The Today page's "Log as eaten" button loops the slot's already-planned
-    // dishes through POST /api/actual_meals — same call the client JS makes.
-    const logRes = await fetch(`${ctx.base}/api/actual_meals`, {
+    // The Today page's "Log as eaten" button calls this single server-side
+    // route (src/routes/serve.js) — one transaction covering every planned dish
+    // in the slot, not a client-side loop of one POST per dish (Audit
+    // 2026-07-18, code #8: the old loop could leave a slot half-logged on a
+    // mid-loop failure).
+    const logRes = await fetch(`${ctx.base}/api/plans/${today}/morning/log`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: cookie },
-      body: JSON.stringify({ date: today, slot: 'morning', dish_item_id: dish.id }),
+      headers: { Cookie: cookie },
     });
-    assert.equal(logRes.status, 201);
+    assert.equal(logRes.status, 200);
 
     const displayAfter = await (await fetch(`${ctx.base}/api/display/today`)).json();
     assert.equal(displayAfter.slots.morning.source, 'actual');
@@ -282,7 +285,7 @@ test('a single planned dish can be removed directly via DELETE /api/plans/:id, w
   const ctx = await startServer();
   try {
     const dishes = ctx.db.prepare("SELECT id FROM dish_items WHERE meal_role = 'dry_side' LIMIT 2").all();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
     const cookie = 'editor=PK';
 
     const plan1 = await (
