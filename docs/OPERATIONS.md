@@ -9,6 +9,7 @@ This is the single ops runbook (CLAUDE.md A4: exactly one OPERATIONS.md, updated
 - Migrate
 - Seed / taxonomy-update procedure
 - Backup / restore (incl. the executed drill transcript)
+- Fresh-clone drill (proves the repo is self-contained)
 - Folder-copy migration to another host
 - Troubleshooting
 - Predator deployment
@@ -172,6 +173,91 @@ $ curl -s http://localhost:13011/health
 All row counts, the spot-check query, and the user-entered `plans` row matched exactly before and after. **Restore verified working end-to-end**, including the running app confirming a healthy DB via `/health` against the restored file.
 
 (Note: this sandbox had no `sqlite3` CLI preinstalled and no root to `apt install` it — the drill above used `apt-get download sqlite3 && dpkg-deb -x ... ` to extract the binary into a user-local path without root, purely to run this drill. Predator, a full Ubuntu Server install, should have `sqlite3` available via a normal `apt-get install sqlite3` as PK, or may already have it.)
+
+---
+
+## Fresh-clone drill — actually executed, 2026-07-18
+
+Proves the repo is self-contained: nothing beyond `git clone` + the documented commands is needed to get a working, tested, containerized instance. Run against commit `46cb23c` (this phase's own commit) cloned to a scratch directory outside the repo.
+
+```
+=== 1. git clone ===
+$ git clone /home/prakash/homelab/kitchenplanner /tmp/kp-fresh-clone
+Cloning into '/tmp/kp-fresh-clone'...
+done.
+$ git log --oneline -1
+46cb23c Phase 5: packaging, backup/restore, docs
+
+=== 2. npm ci ===
+$ npm ci
+added 105 packages, and audited 106 packages in 1s
+(4 vulnerabilities reported by npm audit — pre-existing in upstream deps, not
+introduced by this phase; not blocking, noted for a future dependency-bump pass)
+
+=== 3. migrate ===
+$ node src/db/migrate.js
+Applied 6 migration(s): [
+  '001_init.sql', '002_special_day_flags.sql', '003_taxonomy_v14.sql',
+  '004_api_support.sql', '005_undo_source.sql', '006_meal_patterns.sql'
+]
+
+=== 4. seed ===
+$ node seed/load.js
+Seed complete: { families: 58, items: 199, links: 199 }
+$ node seed/verify.js
+No divergence found.
+
+=== 5. npm test ===
+$ npm test
+...
+1..143
+# tests 148
+# suites 0
+# pass 148
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+
+=== 6. docker build ===
+$ docker build -t kp-fresh-clone-test .
+...
+#11 naming to docker.io/library/kp-fresh-clone-test:latest done
+#11 DONE 1.2s
+
+=== 7. docker run (named volume, to test persistence across a restart) ===
+$ docker run -d --name kp-fresh-test -p 13012:3010 -v kp-fresh-data:/app/data kp-fresh-clone-test
+$ docker ps --filter name=kp-fresh-test
+CONTAINER ID   IMAGE                 STATUS                            PORTS
+62523afc65e4   kp-fresh-clone-test   Up 2 seconds (health: starting)   0.0.0.0:13012->3010/tcp
+
+=== 8. curl /health (before seeding, then after) ===
+$ curl -s http://localhost:13012/health
+{"ok":true,"db":"ready","migration":"006_meal_patterns.sql","taxonomy_version":null,"taxonomy_json_sha256":null}
+$ docker exec kp-fresh-test node seed/load.js
+Seed complete: { families: 58, items: 199, links: 199 }
+$ curl -s http://localhost:13012/health
+{"ok":true,"db":"ready","migration":"006_meal_patterns.sql","taxonomy_version":"1.7","taxonomy_json_sha256":"1d7b6bfd96fc7b477cb4b4f06e0b6be086d042a245858b86777c595e55a8986f"}
+
+=== 9. smoke test: plan a meal and read it back through the running container ===
+$ curl -s -X POST http://localhost:13012/api/plans -H "X-Editor: PK" -H "Content-Type: application/json" \
+    -d '{"date":"2026-07-25","slot":"morning","dish_item_id":1}'
+{"id":1,"date":"2026-07-25","slot":"morning","dish_item_id":1,"note":null,"ordering":0,"headcount":null,"created_at":"2026-07-18 00:23:32"}
+$ curl -s "http://localhost:13012/api/plans?date=2026-07-25" -H "X-Editor: PK"
+[{"id":1,"date":"2026-07-25","slot":"morning","dish_item_id":1,...}]
+
+=== 10. restart the container, confirm the plan + taxonomy survive (volume persistence) ===
+$ docker restart kp-fresh-test
+kp-fresh-test
+$ curl -s http://localhost:13012/health
+{"ok":true,"db":"ready","migration":"006_meal_patterns.sql","taxonomy_version":"1.7","taxonomy_json_sha256":"1d7b6bfd96fc7b477cb4b4f06e0b6be086d042a245858b86777c595e55a8986f"}
+$ curl -s "http://localhost:13012/api/plans?date=2026-07-25" -H "X-Editor: PK"
+[{"id":1,"date":"2026-07-25","slot":"morning","dish_item_id":1,...}]     # survived the restart
+```
+
+**Result: repo is self-contained.** A fresh clone with no prior state builds, tests green (148/148), containerizes, boots, seeds, serves real API traffic, and persists that data across a container restart via the compose-documented volume mount — closing the previously-unverified "runs inside Docker Compose; data persists across container restarts" acceptance-criteria bullet from the Phase 4 smoke test below.
+
+(Scratch container, image, and volume were removed after this drill — `docker rm -f kp-fresh-test && docker volume rm kp-fresh-data && docker rmi kp-fresh-clone-test`.)
 
 ---
 
