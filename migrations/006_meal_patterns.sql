@@ -25,7 +25,7 @@ INSERT INTO settings (key, value) VALUES ('meal_patterns', '{
     "rows": [
       {"role":"tiffin_main","label":"Tiffin","max":2},
       {"role":"tiffin_side","label":"Side / Gravy","max":1,"offer_morning_carryover":true},
-      {"role":"condiment","label":"Chutney / Thogayal","max":2,"filter_class":"thogayal"},
+      {"role":"condiment","label":"Chutney","max":2,"filter_class":"chutney"},
       {"role":"crisp_side","label":"Crisp","max":1}
     ]
   },

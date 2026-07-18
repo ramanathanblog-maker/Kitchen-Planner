@@ -80,6 +80,7 @@ function renderWizardHub(hub, { locked = false, editor = null } = {}) {
     ${visibleRows.map((r) => rowHtml(date, slot, r, locked)).join('\n')}
     <div class="sheet__footer" style="position:static; margin-top: var(--space-4);">
       <a class="btn btn-primary" style="width:100%; display:block; text-align:center;" href="/plan">Save day</a>
+      <a class="btn" style="width:100%; display:block; text-align:center; margin-top: var(--space-2);" href="/plan">Back to Plan</a>
     </div>
   </div>
   <script src="/alpine.min.js" defer></script>

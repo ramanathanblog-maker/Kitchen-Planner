@@ -85,6 +85,23 @@ test('candidateItemsForRole with filter_class narrows to only that taxonomy clas
   }
 });
 
+test('candidateItemsForRole: noon condiment row (filter_class chutney) returns only chutney-class items, never thogayal', () => {
+  const { db, dbPath } = tmpDb();
+  try {
+    const chutney = wizard.candidateItemsForRole(db, { slot: 'noon', role: 'condiment', filterClass: 'chutney' });
+    assert.ok(chutney.length > 0, 'noon Chutney row must return candidates');
+    for (const it of chutney) {
+      assert.ok(JSON.parse(it.slot_fit).includes('noon'));
+    }
+    const thogayal = wizard.candidateItemsForRole(db, { slot: 'morning', role: 'condiment', filterClass: 'thogayal' });
+    const thogayalIds = new Set(thogayal.map((i) => i.id));
+    for (const it of chutney) assert.ok(!thogayalIds.has(it.id), 'thogayal items (morning/night only) must not leak into the noon chutney row');
+  } finally {
+    db.close();
+    cleanup(dbPath);
+  }
+});
+
 test('groupByClassAndFamily: gravy groups items under Sambar/Kozhambu classes, each with bounded families', () => {
   const { db, dbPath } = tmpDb();
   try {

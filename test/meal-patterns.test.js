@@ -46,6 +46,9 @@ test('meal_patterns settings row seeds via migration with the amendment §3 shap
     assert.equal(patterns.noon.rows.length, 4);
     const sideGravy = patterns.noon.rows.find((r) => r.role === 'tiffin_side');
     assert.equal(sideGravy.offer_morning_carryover, true);
+    const noonChutneyRow = patterns.noon.rows.find((r) => r.label === 'Chutney');
+    assert.ok(noonChutneyRow, 'noon has a Chutney row');
+    assert.equal(noonChutneyRow.filter_class, 'chutney', 'noon condiment row must filter on chutney (taxonomy v1.6), not thogayal — thogayal is morning/night only');
 
     // Migration 008 (Audit 2026-07-18, UX #1): night is no longer an empty
     // dead end — a minimal interim free-pick pattern, explicitly provisional.
