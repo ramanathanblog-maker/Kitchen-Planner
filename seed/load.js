@@ -359,6 +359,7 @@ function seed(db, jsonPath = JSON_PATH) {
 
   const run = db.transaction(() => {
     upsertSetting(db, 'taxonomy_json_sha256', sha256);
+    upsertSetting(db, 'taxonomy_version', data.version);
     upsertSetting(db, 'vegetable_repetition_any_form_gap_days', String(data.rules.vegetable_repetition.any_form_gap_days));
     upsertSetting(db, 'vegetable_repetition_same_form_gap_days', String(data.rules.vegetable_repetition.same_form_gap_days));
     upsertSetting(db, 'meal_composition_enforced_slots', JSON.stringify(data.rules.meal_composition.enforced_slots));

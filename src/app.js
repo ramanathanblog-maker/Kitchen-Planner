@@ -41,8 +41,27 @@ function createApp(db) {
   app.use(express.static(path.join(__dirname, '..', 'public')));
   app.use(express.json());
 
+  // Real connectivity + version check (Phase 5) — this replaced the Phase 0
+  // stub ({ok:true, db:'pending', migration:null} always, regardless of actual
+  // state) that once caused a stale-build misdiagnosis: a dead/old process kept
+  // answering health checks as if everything were fine. This is also the Docker
+  // HEALTHCHECK target, so a genuinely broken DB must fail it, not report ok.
   app.get('/health', (req, res) => {
-    res.json({ ok: true, db: 'ready', migration: currentVersion(db) });
+    try {
+      db.prepare('SELECT 1').get();
+      const migration = currentVersion(db);
+      const taxonomyVersion = db.prepare("SELECT value FROM settings WHERE key = 'taxonomy_version'").get();
+      const taxonomySha256 = db.prepare("SELECT value FROM settings WHERE key = 'taxonomy_json_sha256'").get();
+      res.json({
+        ok: true,
+        db: 'ready',
+        migration,
+        taxonomy_version: taxonomyVersion ? taxonomyVersion.value : null,
+        taxonomy_json_sha256: taxonomySha256 ? taxonomySha256.value : null,
+      });
+    } catch (err) {
+      res.status(503).json({ ok: false, db: 'error', error: err.message });
+    }
   });
 
   app.get('/styleguide', (req, res) => {

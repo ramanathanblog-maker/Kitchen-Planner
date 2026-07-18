@@ -51,13 +51,31 @@ function rp(extra = {}) {
   return { 'X-Editor': 'RP', 'Content-Type': 'application/json', ...extra };
 }
 
-test('GET /health', async () => {
+test('GET /health reports real DB connectivity, migration version, and taxonomy version+sha256', async () => {
   const ctx = await startServer();
   try {
     const res = await fetch(`${ctx.base}/health`);
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.ok, true);
+    assert.equal(body.db, 'ready');
+    assert.ok(body.migration, 'migration must report the actual applied schema_migrations version, not null');
+    assert.equal(body.taxonomy_version, '1.7');
+    assert.match(body.taxonomy_json_sha256, /^[0-9a-f]{64}$/);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('GET /health reports db:error with a non-200 status when the DB is unreachable', async () => {
+  const ctx = await startServer();
+  try {
+    ctx.db.close();
+    const res = await fetch(`${ctx.base}/health`);
+    assert.equal(res.status, 503);
+    const body = await res.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.db, 'error');
   } finally {
     await ctx.close();
   }

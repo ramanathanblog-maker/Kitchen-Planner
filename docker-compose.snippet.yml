@@ -1,5 +1,7 @@
 # Block for PK to merge into ~/homelab/docker-compose.yml.
 # Port 3010 is reserved for this app — 3000 and 5433 are taken by NeoTrack dev on the same host.
+# Do NOT paste this file's own top-level `services:` key if the shared compose file
+# already has one — merge just the `kitchen-planner:` block underneath it.
   kitchen-planner:
     build: ./kitchen-planner
     container_name: kitchen-planner
@@ -10,3 +12,13 @@
       - ./kitchen-planner/data:/app/data
     environment:
       - NODE_ENV=production
+      - KITCHEN_DB=/app/data/kitchen.db
+    # Healthcheck also lives in the image's own Dockerfile HEALTHCHECK (hits
+    # GET /health, the real DB-connectivity check, not the Phase 0 stub); listed
+    # here too only so `docker compose ps` shows it without needing `docker inspect`.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3010/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
