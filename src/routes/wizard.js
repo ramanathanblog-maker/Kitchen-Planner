@@ -35,11 +35,12 @@ function pageRouter(db) {
     const hub = getHubData(db, { date, slot });
     const editor = readEditorFromCookie(req);
     const locked = date < todayStr() && editor !== 'PK';
-    res.type('html').send(renderWizardHub(hub, { locked }));
+    res.type('html').send(renderWizardHub(hub, { locked, editor }));
   });
 
   router.get('/:date/:slot/:rowSlug', (req, res) => {
     const { date, slot, rowSlug: slug } = req.params;
+    const editor = readEditorFromCookie(req);
     assertInDomain(slot, 'slot', 'slot');
     const pattern = getSlotPattern(db, slot);
     const row = findRowBySlug(pattern, slug);
@@ -74,12 +75,13 @@ function pageRouter(db) {
       carryover = morningGravyCarryover(db, date);
     }
     const chosen = chosenForRole(db, { date, slot, role: row.role, filterClass: row.filter_class });
-    res.type('html').send(renderWizardRole({ date, slot, row, rowSlug: slug, groups, carryover, chosen }));
+    res.type('html').send(renderWizardRole({ date, slot, row, rowSlug: slug, groups, carryover, chosen, editor }));
   });
 
   router.get('/:date/:slot/:rowSlug/:familyId', (req, res) => {
     const { date, slot, rowSlug: slug } = req.params;
     const familyId = Number(req.params.familyId);
+    const editor = readEditorFromCookie(req);
     assertInDomain(slot, 'slot', 'slot');
     const pattern = getSlotPattern(db, slot);
     const row = findRowBySlug(pattern, slug);
@@ -90,7 +92,7 @@ function pageRouter(db) {
     const items = allItems.filter((i) => i.family_id === familyId);
     if (items.length === 0) throw new ApiError(404, 'no items for this family/role/slot combination');
     const evaluated = evaluateItemsForLeaf(db, { date, slot, items });
-    res.type('html').send(renderWizardItems({ date, slot, row, rowSlug: slug, familyId, familyName: items[0].family_name, items: evaluated }));
+    res.type('html').send(renderWizardItems({ date, slot, row, rowSlug: slug, familyId, familyName: items[0].family_name, items: evaluated, editor }));
   });
 
   return router;

@@ -49,8 +49,8 @@ function ingredientRuleCard(rule) {
       ${optionsHtml(VERDICT_OPTIONS, rule.verdict)}
     </select>
     <textarea name="note" placeholder="note">${escapeHtml(rule.note || '')}</textarea>
-    <button class="btn btn-primary" @click="saveIngredientRule(${rule.id}, $event.target)">Save</button>
-    <button class="btn" @click="confirmDeleteRule = { pathSegment: 'ingredient_family', id: ${rule.id}, label: ${jsonForAttr(rule.ingredient_name + ' × ' + rule.family_name)} }">Delete</button>
+    <button class="btn btn-primary" :disabled="busy" @click="saveIngredientRule(${rule.id}, $event.target)">Save</button>
+    <button class="btn" :disabled="busy" @click="confirmDeleteRule = { pathSegment: 'ingredient_family', id: ${rule.id}, label: ${jsonForAttr(rule.ingredient_name + ' × ' + rule.family_name)} }">Delete</button>
   </div>`;
 }
 
@@ -62,12 +62,25 @@ function repeatRuleCard(rule) {
     <select name="severity">
       ${optionsHtml(SEVERITY_OPTIONS, rule.severity)}
     </select>
-    <button class="btn btn-primary" @click="saveRepeatRule(${rule.id}, $event.target)">Save</button>
-    <button class="btn" @click="confirmDeleteRule = { pathSegment: 'dish_repeat', id: ${rule.id}, label: ${jsonForAttr(rule.dish_name)} }">Delete</button>
+    <button class="btn btn-primary" :disabled="busy" @click="saveRepeatRule(${rule.id}, $event.target)">Save</button>
+    <button class="btn" :disabled="busy" @click="confirmDeleteRule = { pathSegment: 'dish_repeat', id: ${rule.id}, label: ${jsonForAttr(rule.dish_name)} }">Delete</button>
   </div>`;
 }
 
-function renderKnowledge(data) {
+// Renders the already-computed summary/undo_preview (src/data/eventDescriptions.js
+// via src/data/knowledge.js) instead of the old raw "date · who · table · source"
+// line — Audit 2026-07-18, UX #3: History used to give no way to tell what a
+// mistake actually was, or what Undo would do, without reading stored JSON by hand.
+function eventCard(ev) {
+  return `
+  <div class="dish-card" style="flex-direction:column; align-items:stretch;">
+    <div>${escapeHtml(ev.summary)}</div>
+    <div class="dish-card__family">${escapeHtml(ev.at)} · ${escapeHtml(ev.source)}</div>
+    <button class="btn" :disabled="busy" @click="confirmUndo = { id: ${ev.id}, preview: ${jsonForAttr(ev.undo_preview)} }">Undo</button>
+  </div>`;
+}
+
+function renderKnowledge(data, { editor = null } = {}) {
   // Only the fields the client actually reads get embedded — data.
   // ingredients/families/items (72+57+191 rows) exist in `data` for other callers
   // of getKnowledgeData but must not be shipped to the client unused; embedding
@@ -80,12 +93,12 @@ function renderKnowledge(data) {
   const clientData = {
     ingredientRuleVersions: Object.fromEntries(data.ingredientRules.map((r) => [r.id, r.version])),
     repeatRuleVersions: Object.fromEntries(data.repeatRules.map((r) => [r.id, r.version])),
-    events: data.events,
     placeholders: data.placeholders,
   };
   const body = `
   <div x-data="knowledgeView(${jsonForAttr(clientData)})">
     <h1>Knowledge</h1>
+    <p><a href="/special-days">Special days →</a></p>
 
     <div style="display:flex; gap: var(--space-2); flex-wrap:wrap; margin-bottom: var(--space-4);">
       <button class="btn" :class="{ 'btn-primary': tab === 'ingredient' }" @click="tab = 'ingredient'">Ingredient rules</button>
@@ -109,7 +122,7 @@ function renderKnowledge(data) {
           ${optionsHtml(VERDICT_OPTIONS, 'unsure')}
         </select>
         <textarea x-model="newIngredientRule.note" placeholder="note"></textarea>
-        <button class="btn btn-primary" @click="addIngredientRule()">Add rule</button>
+        <button class="btn btn-primary" :disabled="busy" @click="addIngredientRule()">Add rule</button>
       </div>
       ${data.ingredientRules.map(ingredientRuleCard).join('\n')}
     </section>
@@ -125,7 +138,7 @@ function renderKnowledge(data) {
         <select x-model="newRepeatRule.severity">
           ${optionsHtml(SEVERITY_OPTIONS, 'soft')}
         </select>
-        <button class="btn btn-primary" @click="addRepeatRule()">Add rule</button>
+        <button class="btn btn-primary" :disabled="busy" @click="addRepeatRule()">Add rule</button>
       </div>
       ${data.repeatRules.map(repeatRuleCard).join('\n')}
     </section>
@@ -135,19 +148,25 @@ function renderKnowledge(data) {
         <div class="sheet sheet--static">
           <h2>Delete this rule?</h2>
           <p><strong x-text="confirmDeleteRule.label"></strong></p>
-          <button class="btn btn-primary" style="display:block; width:100%; margin-bottom: var(--space-2);" @click="deleteRule(confirmDeleteRule.pathSegment, confirmDeleteRule.id); confirmDeleteRule = null">Delete</button>
+          <button class="btn btn-primary" style="display:block; width:100%; margin-bottom: var(--space-2);" :disabled="busy" @click="deleteRule(confirmDeleteRule.pathSegment, confirmDeleteRule.id); confirmDeleteRule = null">Delete</button>
           <button class="btn" style="width:100%;" @click="confirmDeleteRule = null">Cancel</button>
         </div>
       </div>
     </template>
 
-    <section x-show="tab === 'events'">
-      <template x-for="ev in events" :key="ev.id">
-        <div class="dish-card" style="flex-direction:column; align-items:stretch;">
-          <div class="dish-card__family" x-text="ev.at + ' · ' + ev.who + ' · ' + ev.table_name + ' · ' + ev.source"></div>
-          <button class="btn" @click="undo(ev.id)">Undo</button>
+    <template x-if="confirmUndo">
+      <div class="sheet-backdrop" @click.self="confirmUndo = null">
+        <div class="sheet sheet--static">
+          <h2>Undo this?</h2>
+          <p x-text="confirmUndo.preview"></p>
+          <button class="btn btn-primary" style="display:block; width:100%; margin-bottom: var(--space-2);" :disabled="busy" @click="undo(confirmUndo.id); confirmUndo = null">Undo</button>
+          <button class="btn" style="width:100%;" @click="confirmUndo = null">Cancel</button>
         </div>
-      </template>
+      </div>
+    </template>
+
+    <section x-show="tab === 'events'">
+      ${data.events.map(eventCard).join('\n')}
     </section>
 
     <section x-show="tab === 'needs_input'">
@@ -167,13 +186,16 @@ function renderKnowledge(data) {
         tab: 'ingredient',
         ingredientRuleVersions: initial.ingredientRuleVersions,
         repeatRuleVersions: initial.repeatRuleVersions,
-        events: initial.events,
         placeholders: initial.placeholders,
         newIngredientRule: { ingredient_id: '', family_id: '', verdict: 'unsure', note: '' },
         newRepeatRule: { dish_item_id: '', min_gap_days: 3, severity: 'soft' },
         confirmDeleteRule: null,
+        confirmUndo: null,
+        // Guards every mutating button on this page against a double-tap firing
+        // two overlapping requests (audit code #1 / UX #10).
+        busy: false,
         async putRule(pathSegment, id, body) {
-          const res = await fetch('/api/rules/' + pathSegment + '/' + id, {
+          const res = await kpFetch('/api/rules/' + pathSegment + '/' + id, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -182,92 +204,103 @@ function renderKnowledge(data) {
             kpShowError('Changed since you loaded it — reload and reapply.');
             return false;
           }
-          if (!res.ok) {
-            let message = 'Save failed (' + res.status + ').';
-            try {
-              const respBody = await res.json();
-              if (respBody && respBody.error) message = respBody.error;
-            } catch (e) { /* non-JSON error body */ }
-            kpShowError(message);
-            return false;
-          }
-          return true;
+          return res.ok;
         },
         async saveIngredientRule(id, buttonEl) {
-          const card = buttonEl.closest('.dish-card');
-          const ok = await this.putRule('ingredient_family', id, {
-            version: this.ingredientRuleVersions[id],
-            verdict: card.querySelector('select[name="verdict"]').value,
-            note: card.querySelector('textarea[name="note"]').value,
-          });
-          if (ok) window.location.reload();
+          if (this.busy) return;
+          this.busy = true;
+          try {
+            const card = buttonEl.closest('.dish-card');
+            const ok = await this.putRule('ingredient_family', id, {
+              version: this.ingredientRuleVersions[id],
+              verdict: card.querySelector('select[name="verdict"]').value,
+              note: card.querySelector('textarea[name="note"]').value,
+            });
+            if (ok) window.location.reload();
+          } finally {
+            this.busy = false;
+          }
         },
         async saveRepeatRule(id, buttonEl) {
-          const card = buttonEl.closest('.dish-card');
-          const ok = await this.putRule('dish_repeat', id, {
-            version: this.repeatRuleVersions[id],
-            severity: card.querySelector('select[name="severity"]').value,
-            min_gap_days: Number(card.querySelector('input[name="min_gap_days"]').value),
-          });
-          if (ok) window.location.reload();
+          if (this.busy) return;
+          this.busy = true;
+          try {
+            const card = buttonEl.closest('.dish-card');
+            const ok = await this.putRule('dish_repeat', id, {
+              version: this.repeatRuleVersions[id],
+              severity: card.querySelector('select[name="severity"]').value,
+              min_gap_days: Number(card.querySelector('input[name="min_gap_days"]').value),
+            });
+            if (ok) window.location.reload();
+          } finally {
+            this.busy = false;
+          }
         },
         async addIngredientRule() {
+          if (this.busy) return;
           if (!this.newIngredientRule.ingredient_id || !this.newIngredientRule.family_id) {
             kpShowError('Pick an ingredient and a dish family.');
             return;
           }
-          const res = await fetch('/api/rules/ingredient_family', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(this.newIngredientRule),
-          });
-          if (!res.ok) {
-            let message = 'Add failed (' + res.status + ').';
-            try {
-              const body = await res.json();
-              if (body && body.error) message = body.error;
-            } catch (e) { /* non-JSON error body */ }
-            kpShowError(message);
-            return;
+          this.busy = true;
+          try {
+            const res = await kpFetch('/api/rules/ingredient_family', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(this.newIngredientRule),
+            });
+            if (!res.ok) return;
+            window.location.reload();
+          } finally {
+            this.busy = false;
           }
-          window.location.reload();
         },
         async addRepeatRule() {
+          if (this.busy) return;
           if (!this.newRepeatRule.dish_item_id) {
             kpShowError('Pick a dish.');
             return;
           }
-          const res = await fetch('/api/rules/dish_repeat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(this.newRepeatRule),
-          });
-          if (!res.ok) {
-            let message = 'Add failed (' + res.status + ').';
-            try {
-              const body = await res.json();
-              if (body && body.error) message = body.error;
-            } catch (e) { /* non-JSON error body */ }
-            kpShowError(message);
-            return;
+          this.busy = true;
+          try {
+            const res = await kpFetch('/api/rules/dish_repeat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(this.newRepeatRule),
+            });
+            if (!res.ok) return;
+            window.location.reload();
+          } finally {
+            this.busy = false;
           }
-          window.location.reload();
         },
         async deleteRule(pathSegment, ruleId) {
-          const res = await kpFetch('/api/rules/' + pathSegment + '/' + ruleId, { method: 'DELETE' });
-          if (!res.ok) return;
-          window.location.reload();
+          if (this.busy) return;
+          this.busy = true;
+          try {
+            const res = await kpFetch('/api/rules/' + pathSegment + '/' + ruleId, { method: 'DELETE' });
+            if (!res.ok) return;
+            window.location.reload();
+          } finally {
+            this.busy = false;
+          }
         },
         async undo(eventId) {
-          const res = await kpFetch('/api/knowledge_events/' + eventId + '/undo', { method: 'POST' });
-          if (!res.ok) return;
-          window.location.reload();
+          if (this.busy) return;
+          this.busy = true;
+          try {
+            const res = await kpFetch('/api/knowledge_events/' + eventId + '/undo', { method: 'POST' });
+            if (!res.ok) return;
+            window.location.reload();
+          } finally {
+            this.busy = false;
+          }
         },
       };
     }
   </script>
   `;
-  return pageShell({ title: 'Knowledge', activeTab: 'knowledge', bodyHtml: body });
+  return pageShell({ title: 'Knowledge', activeTab: 'knowledge', bodyHtml: body, editor });
 }
 
 module.exports = { renderKnowledge };

@@ -13,7 +13,7 @@ const { openDb } = require('../src/db/connection');
 const { migrate } = require('../src/db/migrate');
 const { seed } = require('../seed/load');
 const { createApp } = require('../src/app');
-const { todayStr } = require('../src/data/dates');
+const { todayStr, addDays } = require('../src/data/dates');
 
 function tmpDbPath() {
   return path.join(os.tmpdir(), `kp-pages-test-${process.pid}-${Math.random().toString(36).slice(2)}.db`);
@@ -328,6 +328,164 @@ test('GET /display (kiosk) has a theme toggle that defaults to light and persist
 
     const todayHtml = await (await fetch(`${ctx.base}/`)).text();
     assert.doesNotMatch(todayHtml, /class="theme-toggle"/, 'non-kiosk pages keep following prefers-color-scheme automatically, unchanged');
+  } finally {
+    await ctx.close();
+  }
+});
+
+// --- Phase R2 (Trust: History, teach feedback, mutation visibility) ---
+
+test('editor identity header shows "You are <editor>" with a switch link on daily-use pages, once an editor cookie is set', async () => {
+  const ctx = await startServer();
+  try {
+    const cookie = 'editor=RP';
+    const html = await (await fetch(`${ctx.base}/`, { headers: { Cookie: cookie } })).text();
+    assert.match(html, /You are <strong>RP<\/strong>/);
+    assert.match(html, /href="\/pick-editor"/);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('editor identity header is absent when no editor cookie is set, and absent on the kiosk page even with one set', async () => {
+  const ctx = await startServer();
+  try {
+    const noCookieHtml = await (await fetch(`${ctx.base}/plan`)).text();
+    assert.doesNotMatch(noCookieHtml, /You are <strong>/);
+
+    const kioskHtml = await (await fetch(`${ctx.base}/display`, { headers: { Cookie: 'editor=PS' } })).text();
+    assert.doesNotMatch(kioskHtml, /You are <strong>/, 'kiosk is read-only/no-identity, per pageShell\'s !kiosk guard');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('Knowledge page links to Special Days', async () => {
+  const ctx = await startServer();
+  try {
+    const html = await (await fetch(`${ctx.base}/knowledge`, { headers: { Cookie: 'editor=PK' } })).text();
+    assert.match(html, /href="\/special-days"/);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('History tab renders human-readable event summaries, not raw table/source codes, plus an Undo confirm sheet with plain-language preview text', async () => {
+  const ctx = await startServer();
+  try {
+    // The seed script writes its interview rules directly (no knowledge_events
+    // row — those are 'seed'-origin data, not audited edits), so an event has
+    // to be produced via a real mutation first.
+    const someIngredient = ctx.db.prepare("SELECT id FROM ingredients WHERE external_id = 'veg_005'").get();
+    const kariFamily = ctx.db.prepare("SELECT id FROM dish_families WHERE external_id = 'fam_006_001'").get();
+    await fetch(`${ctx.base}/api/teach`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Editor': 'PK' },
+      body: JSON.stringify({ table: 'ingredient_family_rules', ingredient_id: someIngredient.id, family_id: kariFamily.id, verdict: 'avoid' }),
+    });
+
+    const html = await (await fetch(`${ctx.base}/knowledge`, { headers: { Cookie: 'editor=PK' } })).text();
+    assert.match(html, /PK added .+ × Kari.* to avoid/, 'History must show a human-readable summary, not just raw table_name/source');
+    assert.match(html, /confirmUndo = \{ id: \d+, preview:/, 'Undo must open a confirm sheet carrying preview text, not fire immediately');
+    assert.match(html, /Undo this\?/);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('POST /api/teach response carries knowledge_events_id, so the client can offer an inline Undo without a second lookup', async () => {
+  const ctx = await startServer();
+  try {
+    const kariFamily = ctx.db.prepare("SELECT id FROM dish_families WHERE external_id = 'fam_006_001'").get();
+    const someIngredient = ctx.db.prepare("SELECT id FROM ingredients WHERE external_id = 'veg_005'").get();
+    const res = await fetch(`${ctx.base}/api/teach`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Editor': 'PK' },
+      body: JSON.stringify({
+        table: 'ingredient_family_rules',
+        ingredient_id: someIngredient.id,
+        family_id: kariFamily.id,
+        verdict: 'avoid',
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Number.isInteger(body.knowledge_events_id));
+    const eventRow = ctx.db.prepare('SELECT * FROM knowledge_events WHERE id = ?').get(body.knowledge_events_id);
+    assert.ok(eventRow, 'the returned id must be a real knowledge_events row');
+    assert.equal(eventRow.row_id, body.id);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('the wizard drill leaf page renders a post-teach toast with inline Undo and a data-dish-item-id hook for in-place chip refresh', async () => {
+  const ctx = await startServer();
+  try {
+    const sambarFamily = ctx.db.prepare("SELECT id FROM dish_families WHERE external_id = 'fam_004_001'").get();
+    const html = await (
+      await fetch(`${ctx.base}/plan/2026-07-20/morning/main_gravy/${sambarFamily.id}`, { headers: { Cookie: 'editor=PK' } })
+    ).text();
+    assert.match(html, /data-dish-item-id="\d+"/, 'each leaf card must be addressable for an in-place chip refresh');
+    assert.match(html, /showToast\(/);
+    assert.match(html, /refreshChipFor\(/);
+    assert.match(html, /Undo<\/button>/);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('mutating buttons carry :disabled="busy" so a double-tap cannot fire two overlapping requests', async () => {
+  const ctx = await startServer();
+  try {
+    const cookie = 'editor=PK';
+    // Shopping only renders a checkbox (the button with :disabled="busy") per
+    // ingredient it actually needs — plan something for tomorrow first so the
+    // page has at least one row to assert against.
+    const dish = ctx.db.prepare("SELECT id FROM dish_items WHERE external_id = 'dish_002'").get();
+    const tomorrow = addDays(todayStr(), 1);
+    await fetch(`${ctx.base}/api/plans`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ date: tomorrow, slot: 'morning', dish_item_id: dish.id }),
+    });
+    const shoppingHtml = await (await fetch(`${ctx.base}/shopping`, { headers: { Cookie: cookie } })).text();
+    assert.match(shoppingHtml, /:disabled="busy"/);
+
+    const knowledgeHtml = await (await fetch(`${ctx.base}/knowledge`, { headers: { Cookie: cookie } })).text();
+    assert.match(knowledgeHtml, /:disabled="busy"/);
+
+    const specialDaysHtml = await (await fetch(`${ctx.base}/special-days`, { headers: { Cookie: cookie } })).text();
+    assert.match(specialDaysHtml, /:disabled="busy"/);
+
+    const todayHtml = await (await fetch(`${ctx.base}/`, { headers: { Cookie: cookie } })).text();
+    assert.match(todayHtml, /:disabled="busy"/);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('specialDays.js mutations (addType/addDate/removeDate) go through kpFetch, not a bare unchecked fetch()', async () => {
+  const ctx = await startServer();
+  try {
+    const html = await (await fetch(`${ctx.base}/special-days`, { headers: { Cookie: 'editor=PK' } })).text();
+    const scriptMatch = html.match(/function specialDaysView\(\)[\s\S]*?<\/script>/);
+    assert.ok(scriptMatch, 'expected to find the specialDaysView script block');
+    assert.doesNotMatch(scriptMatch[0], /await fetch\(/, 'no raw unchecked fetch() should remain in the mutating methods');
+    assert.match(scriptMatch[0], /kpFetch\(/);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('shopping.js\'s toggleLeftover goes through kpFetch, not a bare unchecked fetch()', async () => {
+  const ctx = await startServer();
+  try {
+    const html = await (await fetch(`${ctx.base}/shopping`, { headers: { Cookie: 'editor=PK' } })).text();
+    const scriptMatch = html.match(/function shoppingView\(\)[\s\S]*?<\/script>/);
+    assert.ok(scriptMatch);
+    assert.doesNotMatch(scriptMatch[0], /await fetch\(/);
+    assert.match(scriptMatch[0], /kpFetch\(/);
   } finally {
     await ctx.close();
   }

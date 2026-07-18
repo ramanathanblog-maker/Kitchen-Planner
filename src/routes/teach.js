@@ -76,8 +76,12 @@ function teachRouter(db) {
         row = db.prepare(`SELECT * FROM ${body.table} WHERE id = ?`).get(info.lastInsertRowid);
       }
 
-      logEvent(db, { who: req.editor, tableName: body.table, rowId: row.id, oldValue: current, newValue: row, source: 'one_tap_teach' });
-      return row;
+      const eventId = logEvent(db, { who: req.editor, tableName: body.table, rowId: row.id, oldValue: current, newValue: row, source: 'one_tap_teach' });
+      // knowledge_events_id rides alongside the row so the client can offer an
+      // inline "Undo" on the post-teach toast without a second lookup (Audit
+      // 2026-07-18, UX threat: teach-a-rule). Additive field only — the row's
+      // own shape/fields are unchanged, so nothing that reads `row.id` etc. breaks.
+      return { ...row, knowledge_events_id: eventId };
     })();
 
     res.status(200).json(result);

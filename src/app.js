@@ -6,7 +6,7 @@ const path = require('node:path');
 const express = require('express');
 const { renderStyleguide } = require('./views/styleguide');
 const { currentVersion } = require('./db/migrate');
-const { editorMiddleware } = require('./routes/editor');
+const { editorMiddleware, readEditorFromCookie } = require('./routes/editor');
 const { errorHandler, pageErrorHandler } = require('./routes/errors');
 const { ingredientsRouter } = require('./routes/ingredients');
 const { familiesRouter } = require('./routes/families');
@@ -72,13 +72,13 @@ function createApp(db) {
     res.type('html').send(renderPickEditor());
   });
   app.get('/', (req, res) => {
-    res.type('html').send(renderToday(getTodayData(db, todayStr())));
+    res.type('html').send(renderToday(getTodayData(db, todayStr()), { editor: readEditorFromCookie(req) }));
   });
   app.get('/plan', (req, res) => {
     const today = todayStr();
     const days = Array.from({ length: 7 }, (_, i) => addDays(today, i));
     const { itemsById, plans, compositionWarnings } = getPlanData(db, days[0], days[6]);
-    res.type('html').send(renderPlan({ days, plans, itemsById, compositionWarnings }));
+    res.type('html').send(renderPlan({ days, plans, itemsById, compositionWarnings, editor: readEditorFromCookie(req) }));
   });
   app.get('/shopping', (req, res) => {
     const today = todayStr();
@@ -88,13 +88,13 @@ function createApp(db) {
       tomorrow: { date: tomorrow, ...ingredientsForRange(db, tomorrow, tomorrow) },
       week: { from: tomorrow, to: weekEnd, ...ingredientsForRange(db, tomorrow, weekEnd) },
     };
-    res.type('html').send(renderShopping(data));
+    res.type('html').send(renderShopping(data, { editor: readEditorFromCookie(req) }));
   });
   app.get('/knowledge', (req, res) => {
-    res.type('html').send(renderKnowledge(getKnowledgeData(db)));
+    res.type('html').send(renderKnowledge(getKnowledgeData(db), { editor: readEditorFromCookie(req) }));
   });
   app.get('/special-days', (req, res) => {
-    res.type('html').send(renderSpecialDays(getSpecialDaysData(db)));
+    res.type('html').send(renderSpecialDays(getSpecialDaysData(db), { editor: readEditorFromCookie(req) }));
   });
   // Guided plan wizard (Phase 4b Amendment §2/§8) — real server-rendered pages
   // under /plan/:date/:slot[...] — the sole entry point for planning a slot.

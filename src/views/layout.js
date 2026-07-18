@@ -5,7 +5,7 @@
 // no fetch-on-load. Cross-document CSS view transitions (opted into via
 // `@view-transition { navigation: auto; }` in theme.css) animate between each
 // navigation's real before/after rendered state.
-function pageShell({ title, activeTab = null, bodyHtml, kiosk = false, requireEditor = true }) {
+function pageShell({ title, activeTab = null, bodyHtml, kiosk = false, requireEditor = true, editor = null }) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -22,6 +22,7 @@ ${requireEditor ? editorGuardScript() : ''}
 <div id="kp-error-banner" class="error-banner" style="display:none;" role="alert" aria-live="assertive"></div>
 <main>
 ${kiosk ? themeToggleButton() : ''}
+${!kiosk && editor ? editorHeaderHtml(editor) : ''}
 ${bodyHtml}
 </main>
 ${activeTab ? tabBar(activeTab) : ''}
@@ -31,6 +32,19 @@ ${activeTab ? tabBar(activeTab) : ''}
 ${errorBannerScript()}
 </body>
 </html>`;
+}
+
+// "You are RP · Switch" — no page previously showed who the device is currently
+// acting as (the editor cookie set by /pick-editor is silent once set), so a
+// shared/kiosk-adjacent device could attribute every edit to whoever set it up
+// last, with no visible way to check or change it short of typing /pick-editor
+// by hand (Audit 2026-07-18, UX #8). Kiosk pages opt out (kiosk is read-only,
+// no identity involved) via the `!kiosk` check in pageShell above.
+function editorHeaderHtml(editor) {
+  return `<div class="editor-header" style="display:flex; justify-content:flex-end; align-items:center; gap: var(--space-2); margin-bottom: var(--space-3); font-size: var(--fs-chip); color: var(--info);">
+  <span>You are <strong>${escapeHtml(editor)}</strong></span>
+  <a class="btn" style="padding: var(--space-1) var(--space-2); min-height:auto; min-width:auto;" href="/pick-editor">Switch</a>
+</div>`;
 }
 
 function editorGuardScript() {

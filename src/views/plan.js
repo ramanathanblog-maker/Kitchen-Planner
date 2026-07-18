@@ -34,7 +34,7 @@ function dayHtml(day, plansByDaySlot, itemsById, compositionWarnings) {
 // flat suggestion picker was removed per PK: the pattern-hub wizard
 // (src/views/wizard.js, /plan/:date/:slot) is now the sole entry point for
 // planning a slot — no separate "+ Add" flat-dump sheet.
-function renderPlan({ days, plans, itemsById, compositionWarnings = {} }) {
+function renderPlan({ days, plans, itemsById, compositionWarnings = {}, editor = null }) {
   const plansByDaySlot = {};
   for (const p of plans) {
     (plansByDaySlot[p.date] ||= {});
@@ -47,7 +47,7 @@ function renderPlan({ days, plans, itemsById, compositionWarnings = {} }) {
     ${days.map((day) => dayHtml(day, plansByDaySlot, itemsById, compositionWarnings)).join('\n')}
   </div>
   `;
-  return pageShell({ title: 'Plan', activeTab: 'plan', bodyHtml: body });
+  return pageShell({ title: 'Plan', activeTab: 'plan', bodyHtml: body, editor });
 }
 
 module.exports = { renderPlan };

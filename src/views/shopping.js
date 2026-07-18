@@ -3,7 +3,7 @@ const { pageShell, escapeHtml } = require('./layout');
 function ingredientRow(ing, checked) {
   return `<div class="dish-card">
     <label style="flex:1; display:flex; align-items:center; gap: var(--space-2);">
-      <input type="checkbox" ${checked ? 'checked' : ''} @change="toggleLeftover(${ing.id})">
+      <input type="checkbox" ${checked ? 'checked' : ''} :disabled="busy" @change="toggleLeftover(${ing.id})">
       <span>${escapeHtml(ing.name_en)}</span>
     </label>
   </div>`;
@@ -13,7 +13,7 @@ function ingredientRow(ing, checked) {
 // one triggers a mutation + full reload rather than optimistic client-only state,
 // consistent with every other mutation in this app (real URL, real reload, no SPA
 // state drift).
-function renderShopping(data) {
+function renderShopping(data, { editor = null } = {}) {
   const body = `
   <div x-data="shoppingView()">
     <h1>Shopping</h1>
@@ -38,20 +38,32 @@ function renderShopping(data) {
   <script>
     function shoppingView() {
       return {
+        // Guards the leftover checkboxes against a double-tap firing two
+        // overlapping version-checked PUTs (audit code #1 / UX #10).
+        busy: false,
         async toggleLeftover(ingredientId) {
-          const current = await (await fetch('/api/ingredients/' + ingredientId)).json();
-          await fetch('/api/ingredients/' + ingredientId, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ version: current.version, leftover_flag: current.leftover_flag ? 0 : 1 }),
-          });
-          window.location.reload();
+          if (this.busy) return;
+          this.busy = true;
+          try {
+            const currentRes = await kpFetch('/api/ingredients/' + ingredientId);
+            if (!currentRes.ok) return;
+            const current = await currentRes.json();
+            const putRes = await kpFetch('/api/ingredients/' + ingredientId, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ version: current.version, leftover_flag: current.leftover_flag ? 0 : 1 }),
+            });
+            if (!putRes.ok) return;
+            window.location.reload();
+          } finally {
+            this.busy = false;
+          }
         },
       };
     }
   </script>
   `;
-  return pageShell({ title: 'Shopping', activeTab: 'shopping', bodyHtml: body });
+  return pageShell({ title: 'Shopping', activeTab: 'shopping', bodyHtml: body, editor });
 }
 
 module.exports = { renderShopping };

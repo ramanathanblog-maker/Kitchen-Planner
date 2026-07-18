@@ -7,11 +7,18 @@
 const express = require('express');
 const { ApiError } = require('./errors');
 
+// Returns the new knowledge_events row's id (previously the return value was
+// unused everywhere — this is additive, not a schema or semantics change) so
+// callers that need it for user-facing feedback (e.g. a post-teach "Undo" link,
+// src/views/wizard.js) can reference the exact event without a second query.
 function logEvent(db, { who, tableName, rowId, oldValue, newValue, source }) {
-  db.prepare(
-    `INSERT INTO knowledge_events (who, table_name, row_id, old_value, new_value, source)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(who, tableName, rowId, oldValue == null ? null : JSON.stringify(oldValue), newValue == null ? null : JSON.stringify(newValue), source);
+  const info = db
+    .prepare(
+      `INSERT INTO knowledge_events (who, table_name, row_id, old_value, new_value, source)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    .run(who, tableName, rowId, oldValue == null ? null : JSON.stringify(oldValue), newValue == null ? null : JSON.stringify(newValue), source);
+  return info.lastInsertRowid;
 }
 
 function createResourceRouter(db, opts) {

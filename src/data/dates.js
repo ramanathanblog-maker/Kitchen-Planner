@@ -16,4 +16,16 @@ function addDays(dateStr, days) {
   return d.toISOString().slice(0, 10);
 }
 
-module.exports = { todayStr, addDays, IST_OFFSET_MS };
+const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// "Sat 19 Jul" — for human-readable History lines (Audit 2026-07-18, UX #3).
+// dateStr is a plain YYYY-MM-DD (no time component); parsed as UTC midnight so
+// the weekday/day/month are never off-by-one relative to what the date string
+// itself says, regardless of the server's local timezone.
+function formatDateHuman(dateStr) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  return `${WEEKDAY_NAMES[d.getUTCDay()]} ${d.getUTCDate()} ${MONTH_NAMES[d.getUTCMonth()]}`;
+}
+
+module.exports = { todayStr, addDays, formatDateHuman, IST_OFFSET_MS };
