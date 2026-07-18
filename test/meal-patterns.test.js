@@ -61,6 +61,56 @@ test('meal_patterns settings row seeds via migration with the amendment §3 shap
   }
 });
 
+test('migration 009 fixes an already-deployed noon condiment row (filter_class "thogayal" -> "chutney"), and is idempotent', () => {
+  const dbPath = tmpDbPath();
+  try {
+    const db = openDb(dbPath);
+    migrate(db);
+
+    // Simulate a DB that shipped before 009 existed: hand-roll the row back
+    // to its old broken shape, as if only up through 006 had ever applied.
+    const broken = getMealPatterns(db);
+    const brokenRow = broken.noon.rows.find((r) => r.role === 'condiment');
+    brokenRow.filter_class = 'thogayal';
+    brokenRow.label = 'Chutney / Thogayal';
+    db.prepare("UPDATE settings SET value = ? WHERE key = 'meal_patterns'").run(JSON.stringify(broken));
+    db.prepare("DELETE FROM schema_migrations WHERE version = '009_noon_chutney_fix.sql'").run();
+
+    const before = getSlotPattern(db, 'noon');
+    const beforeRow = before.rows.find((r) => r.role === 'condiment');
+    assert.equal(beforeRow.filter_class, 'thogayal', 'sanity: row is broken before 009 runs');
+
+    const applied = migrate(db);
+    assert.ok(applied.includes('009_noon_chutney_fix.sql'));
+
+    const after = getSlotPattern(db, 'noon');
+    const afterRow = after.rows.find((r) => r.role === 'condiment');
+    assert.equal(afterRow.filter_class, 'chutney', '009 corrects filter_class');
+    assert.equal(afterRow.label, 'Chutney', '009 corrects the label');
+    // other noon rows must be untouched
+    assert.equal(after.rows.length, 4);
+    assert.equal(after.rows.find((r) => r.role === 'tiffin_side').offer_morning_carryover, true);
+
+    // idempotent: re-running migrate() (a no-op, since 009 is now recorded
+    // applied) leaves the corrected value exactly as-is.
+    migrate(db);
+    const afterAgain = getSlotPattern(db, 'noon');
+    assert.deepEqual(afterAgain, after);
+
+    // idempotent at the SQL level too: re-executing 009's statement directly
+    // against an already-correct row (bypassing schema_migrations) must be a
+    // no-op, not an error and not a further mutation.
+    const sql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '009_noon_chutney_fix.sql'), 'utf8');
+    db.exec(sql);
+    const afterRawRerun = getSlotPattern(db, 'noon');
+    assert.deepEqual(afterRawRerun, after);
+
+    db.close();
+  } finally {
+    cleanup(dbPath);
+  }
+});
+
 test('re-running migrate() does not duplicate the meal_patterns settings row', () => {
   const dbPath = tmpDbPath();
   try {
