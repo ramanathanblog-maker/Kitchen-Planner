@@ -5,11 +5,13 @@
 // supertest-style fetch tests set up themselves.
 const path = require('node:path');
 const express = require('express');
+const { createRemoteJWKSet } = require('jose');
 const { renderStyleguide } = require('./views/styleguide');
 const { currentVersion } = require('./db/migrate');
 const { HOUSEHOLDS } = require('./db/households');
 const { editorMiddleware, readEditorFromCookie } = require('./routes/editor');
 const { resolveHouseholdRequest } = require('./routes/household');
+const { createAccessIdentityMiddleware } = require('./routes/access');
 const { errorHandler, pageErrorHandler } = require('./routes/errors');
 const { ingredientsRouter } = require('./routes/ingredients');
 const { familiesRouter } = require('./routes/families');
@@ -115,15 +117,34 @@ function buildHouseholdRoutes(db) {
   return router;
 }
 
-// dbByHousehold: { rp: db, ps: db }. No per-request household routing before
-// Phase 6b — this factory now dispatches each request to the right household's
-// pre-built route tree (see buildHouseholdRoutes above), with a single blanket
-// authorization gate ahead of dispatch (src/routes/household.js) rather than
-// threading a per-request db through every one of the ~20 router files.
-function createApp(dbByHousehold) {
+// dbByHousehold: { rp: db, ps: db }. systemDb: the system.db handle (users
+// table) -- may be omitted/undefined when Cloudflare Access isn't configured
+// (see opts below), since it's only ever touched by the Access middleware.
+// opts lets tests inject a local (non-network) JWKS instead of the real
+// Cloudflare one; production always uses env vars and the real remote JWKS.
+function createApp(dbByHousehold, systemDb, opts = {}) {
   const app = express();
   app.use(express.static(path.join(__dirname, '..', 'public')));
   app.use(express.json());
+
+  // Phase 6c: Cloudflare Access identity path, alongside (not instead of) the
+  // LAN cookie/header picker below. Unconfigured by default (no env vars set)
+  // -- in that state this is a no-op for every request, including every
+  // pre-6c test's createApp({ rp: db }) single-argument call, since systemDb
+  // is never dereferenced when disabled.
+  const cfAccessTeamDomain = opts.cfAccessTeamDomain ?? process.env.CF_ACCESS_TEAM_DOMAIN;
+  const cfAccessAud = opts.cfAccessAud ?? process.env.CF_ACCESS_AUD;
+  const cfAccessJwks =
+    opts.cfAccessJwks ??
+    (cfAccessTeamDomain ? createRemoteJWKSet(new URL(`https://${cfAccessTeamDomain}.cloudflareaccess.com/cdn-cgi/access/certs`)) : null);
+  app.use(
+    createAccessIdentityMiddleware({
+      systemDb,
+      teamDomain: cfAccessTeamDomain,
+      aud: cfAccessAud,
+      jwks: cfAccessJwks,
+    })
+  );
 
   // Real connectivity + version check (Phase 5) — this replaced the Phase 0
   // stub ({ok:true, db:'pending', migration:null} always, regardless of actual

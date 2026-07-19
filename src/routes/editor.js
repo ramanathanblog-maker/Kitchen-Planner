@@ -19,7 +19,15 @@ function parseCookies(header) {
 // Header-or-cookie resolution, no validation — shared by editorMiddleware (which
 // validates and 400s) and the Phase 6b household dispatcher (which only needs to
 // know who's asking, before any household-specific gate runs).
+//
+// Phase 6c: if req.editor is already set, an upstream identity middleware
+// (Cloudflare Access, src/routes/access.js) has already authoritatively
+// resolved who this is from a verified JWT -- that always wins over a stale
+// X-Editor header/cookie on the same request, per the amendment's precedence
+// rule. Only when nothing upstream has set it does this fall back to the
+// plain LAN header/cookie picker, unchanged from before 6c.
 function resolveEditor(req) {
+  if (req.editor && EDITORS.has(req.editor)) return req.editor;
   const cookies = parseCookies(req.headers.cookie);
   const editor = req.get('X-Editor') || cookies.editor;
   return EDITORS.has(editor) ? editor : null;

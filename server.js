@@ -10,7 +10,7 @@ const PORT = process.env.KITCHEN_PORT || 3010;
 // (seed() calls migrate() internally and only upserts seed-origin rows, so
 // this is safe to run against rp.db's existing data on every boot — see
 // seed/load.js's header comment). Plus system.db for cross-household user/
-// login data — schema only in 6a, nothing reads it yet (starts in 6b).
+// login data (Phase 6c: now read by the Cloudflare Access identity path).
 const dbByHousehold = {};
 for (const key of HOUSEHOLDS) {
   const db = openDb(householdDbPath(key));
@@ -20,7 +20,7 @@ for (const key of HOUSEHOLDS) {
 const systemDb = openDb(systemDbPath());
 migrate(systemDb, SYSTEM_MIGRATIONS_DIR);
 
-const app = createApp(dbByHousehold);
+const app = createApp(dbByHousehold, systemDb);
 
 if (require.main === module) {
   app.listen(PORT, () => {

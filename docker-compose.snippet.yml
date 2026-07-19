@@ -29,6 +29,12 @@
       # data/ps.db) plus data/system.db, all resolved under the volume mount
       # above via src/db/households.js — no KITCHEN_DB override needed
       # (that single-path env var applied to the old one-DB-per-app shape).
+      # Phase 6c (Cloudflare Access, off-LAN login): uncomment once the tunnel
+      # + Access application are set up per docs/CLOUDFLARE_SETUP.md. Leaving
+      # these unset (the default until then) makes the Access identity path a
+      # complete no-op — LAN access is unaffected either way.
+      # - CF_ACCESS_TEAM_DOMAIN=<your-team-name>
+      # - CF_ACCESS_AUD=<the-application-audience-tag>
     # Healthcheck also lives in the image's own Dockerfile HEALTHCHECK (hits
     # GET /health, the real DB-connectivity check, not the Phase 0 stub); listed
     # here too only so `docker compose ps` shows it without needing `docker inspect`.
