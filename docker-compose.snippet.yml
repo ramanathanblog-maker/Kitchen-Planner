@@ -25,7 +25,10 @@
       - ./kitchenplanner/data:/app/data
     environment:
       - NODE_ENV=production
-      - KITCHEN_DB=/app/data/kitchen.db
+      # Phase 6a: server.js now opens one DB per household (data/rp.db,
+      # data/ps.db) plus data/system.db, all resolved under the volume mount
+      # above via src/db/households.js — no KITCHEN_DB override needed
+      # (that single-path env var applied to the old one-DB-per-app shape).
     # Healthcheck also lives in the image's own Dockerfile HEALTHCHECK (hits
     # GET /health, the real DB-connectivity check, not the Phase 0 stub); listed
     # here too only so `docker compose ps` shows it without needing `docker inspect`.

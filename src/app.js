@@ -36,7 +36,12 @@ const { getDisplayShoppingData } = require('./routes/display');
 const { ingredientsForRange } = require('./routes/shopping');
 const { pageRouter: wizardPageRouter, apiRouter: wizardApiRouter } = require('./routes/wizard');
 
-function createApp(db) {
+// Phase 6a: takes a { rp, ps, ... } map of open household DBs instead of a
+// single db. No per-request household routing yet (that's Phase 6b) — every
+// route below still resolves to the 'rp' household exactly as it resolved to
+// the single global db before this change, so behavior is unchanged.
+function createApp(dbByHousehold) {
+  const db = dbByHousehold.rp;
   const app = express();
   app.use(express.static(path.join(__dirname, '..', 'public')));
   app.use(express.json());

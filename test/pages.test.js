@@ -29,7 +29,7 @@ async function startServer() {
   const db = openDb(dbPath);
   migrate(db);
   seed(db);
-  const app = createApp(db);
+  const app = createApp({ rp: db });
   const server = await new Promise((resolve) => {
     const s = app.listen(0, () => resolve(s));
   });

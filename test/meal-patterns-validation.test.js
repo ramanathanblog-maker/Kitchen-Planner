@@ -167,7 +167,7 @@ test('HTTP: a malformed meal_patterns value renders a visible HTML error page on
   const { db, dbPath } = freshDb();
   try {
     setPatterns(db, '{not valid json');
-    const app = createApp(db);
+    const app = createApp({ rp: db });
     const server = await new Promise((resolve) => {
       const s = app.listen(0, () => resolve(s));
     });

@@ -26,7 +26,7 @@ async function startServer() {
   const db = openDb(dbPath);
   migrate(db);
   seed(db);
-  const app = createApp(db);
+  const app = createApp({ rp: db });
   const server = await new Promise((resolve) => {
     const s = app.listen(0, () => resolve(s));
   });
@@ -329,7 +329,7 @@ test('POST /api/teach kill test: forced failure on the knowledge_events INSERT (
 
     let threw = false;
     try {
-      const app2 = createApp(ctx.db);
+      const app2 = createApp({ rp: ctx.db });
       const server2 = await new Promise((resolve) => {
         const s = app2.listen(0, () => resolve(s));
       });

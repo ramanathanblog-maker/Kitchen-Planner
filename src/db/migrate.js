@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const { openDb } = require('./connection');
 
 const MIGRATIONS_DIR = path.join(__dirname, '..', '..', 'migrations');
+const SYSTEM_MIGRATIONS_DIR = path.join(__dirname, '..', '..', 'migrations-system');
 
 function ensureMigrationsTable(db) {
   db.exec(`
@@ -13,24 +14,27 @@ function ensureMigrationsTable(db) {
   `);
 }
 
-function listMigrationFiles() {
-  if (!fs.existsSync(MIGRATIONS_DIR)) return [];
+function listMigrationFiles(migrationsDir = MIGRATIONS_DIR) {
+  if (!fs.existsSync(migrationsDir)) return [];
   return fs
-    .readdirSync(MIGRATIONS_DIR)
+    .readdirSync(migrationsDir)
     .filter((f) => f.endsWith('.sql'))
     .sort();
 }
 
-function migrate(db) {
+// migrationsDir defaults to the household-schema migrations/ dir; Phase 6a's
+// system.db passes SYSTEM_MIGRATIONS_DIR (migrations-system/) instead, reusing
+// this same runner/schema_migrations bookkeeping rather than a second engine.
+function migrate(db, migrationsDir = MIGRATIONS_DIR) {
   ensureMigrationsTable(db);
   const applied = new Set(
     db.prepare('SELECT version FROM schema_migrations').all().map((r) => r.version)
   );
-  const files = listMigrationFiles();
+  const files = listMigrationFiles(migrationsDir);
   const results = [];
   for (const file of files) {
     if (applied.has(file)) continue;
-    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8');
+    const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
     const run = db.transaction(() => {
       db.exec(sql);
       db.prepare('INSERT INTO schema_migrations (version) VALUES (?)').run(file);
@@ -56,4 +60,4 @@ if (require.main === module) {
   db.close();
 }
 
-module.exports = { migrate, currentVersion, ensureMigrationsTable, listMigrationFiles };
+module.exports = { migrate, currentVersion, ensureMigrationsTable, listMigrationFiles, MIGRATIONS_DIR, SYSTEM_MIGRATIONS_DIR };
