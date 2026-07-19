@@ -1,12 +1,15 @@
-// Testable app factory: given an already-migrated db, returns a wired Express app.
-// server.js is the thin process entrypoint (opens the real db, migrates, listens);
-// tests call createApp(db) directly against a temp DB with no HTTP listen needed
-// beyond what supertest-style fetch tests set up themselves.
+// Testable app factory: given already-migrated per-household DBs, returns a
+// wired Express app. server.js is the thin process entrypoint (opens the real
+// dbs, migrates/seeds, listens); tests call createApp({ rp: db, ps: db2 })
+// directly against temp DBs with no HTTP listen needed beyond what
+// supertest-style fetch tests set up themselves.
 const path = require('node:path');
 const express = require('express');
 const { renderStyleguide } = require('./views/styleguide');
 const { currentVersion } = require('./db/migrate');
+const { HOUSEHOLDS } = require('./db/households');
 const { editorMiddleware, readEditorFromCookie } = require('./routes/editor');
+const { resolveHouseholdRequest } = require('./routes/household');
 const { errorHandler, pageErrorHandler } = require('./routes/errors');
 const { ingredientsRouter } = require('./routes/ingredients');
 const { familiesRouter } = require('./routes/families');
@@ -36,67 +39,28 @@ const { getDisplayShoppingData } = require('./routes/display');
 const { ingredientsForRange } = require('./routes/shopping');
 const { pageRouter: wizardPageRouter, apiRouter: wizardApiRouter } = require('./routes/wizard');
 
-// Phase 6a: takes a { rp, ps, ... } map of open household DBs instead of a
-// single db. No per-request household routing yet (that's Phase 6b) — every
-// route below still resolves to the 'rp' household exactly as it resolved to
-// the single global db before this change, so behavior is unchanged.
-function createApp(dbByHousehold) {
-  const db = dbByHousehold.rp;
-  const app = express();
-  app.use(express.static(path.join(__dirname, '..', 'public')));
-  app.use(express.json());
+// Builds the full route tree for one household's db -- everything that used to
+// live directly in createApp before Phase 6b, unchanged, just parameterized on
+// db instead of closing over a single outer one. Called once per household so
+// each household's routes stay fully independent Router instances; no route
+// handler in here (or in any of the router factories it calls) needs to know
+// households exist at all.
+function buildHouseholdRoutes(db) {
+  const router = express.Router();
 
-  // Real connectivity + version check (Phase 5) — this replaced the Phase 0
-  // stub ({ok:true, db:'pending', migration:null} always, regardless of actual
-  // state) that once caused a stale-build misdiagnosis: a dead/old process kept
-  // answering health checks as if everything were fine. This is also the Docker
-  // HEALTHCHECK target, so a genuinely broken DB must fail it, not report ok.
-  //
-  // git_commit/built_at close the *other* half of that same failure class
-  // (Audit 2026-07-18, threat: stale-process masking): migration/taxonomy_sha
-  // prove the DB state, but a deploy that changes only JS with no new
-  // migration and no reseed was previously indistinguishable from the old
-  // process at /health. Sourced from GIT_COMMIT/BUILD_TIME env vars baked in
-  // at image build time (Dockerfile ARGs, see OPERATIONS.md "Deploy /
-  // build stamp") — never computed by running git inside the running
-  // container, which may not have git installed or a .git directory at all.
-  app.get('/health', (req, res) => {
-    try {
-      db.prepare('SELECT 1').get();
-      const migration = currentVersion(db);
-      const taxonomyVersion = db.prepare("SELECT value FROM settings WHERE key = 'taxonomy_version'").get();
-      const taxonomySha256 = db.prepare("SELECT value FROM settings WHERE key = 'taxonomy_json_sha256'").get();
-      res.json({
-        ok: true,
-        db: 'ready',
-        migration,
-        taxonomy_version: taxonomyVersion ? taxonomyVersion.value : null,
-        taxonomy_json_sha256: taxonomySha256 ? taxonomySha256.value : null,
-        git_commit: process.env.GIT_COMMIT || 'unknown',
-        built_at: process.env.BUILD_TIME || 'unknown',
-      });
-    } catch (err) {
-      res.status(503).json({ ok: false, db: 'error', error: err.message });
-    }
-  });
-
-  app.get('/styleguide', (req, res) => {
-    res.type('html').send(renderStyleguide());
-  });
-
-  app.get('/pick-editor', (req, res) => {
+  router.get('/pick-editor', (req, res) => {
     res.type('html').send(renderPickEditor());
   });
-  app.get('/', (req, res) => {
+  router.get('/', (req, res) => {
     res.type('html').send(renderToday(getTodayData(db, todayStr()), { editor: readEditorFromCookie(req) }));
   });
-  app.get('/plan', (req, res) => {
+  router.get('/plan', (req, res) => {
     const today = todayStr();
     const days = Array.from({ length: 7 }, (_, i) => addDays(today, i));
     const { itemsById, plans, compositionWarnings } = getPlanData(db, days[0], days[6]);
     res.type('html').send(renderPlan({ days, plans, itemsById, compositionWarnings, editor: readEditorFromCookie(req) }));
   });
-  app.get('/shopping', (req, res) => {
+  router.get('/shopping', (req, res) => {
     const today = todayStr();
     const tomorrow = addDays(today, 1);
     const weekEnd = addDays(today, 7);
@@ -106,32 +70,22 @@ function createApp(dbByHousehold) {
     };
     res.type('html').send(renderShopping(data, { editor: readEditorFromCookie(req) }));
   });
-  app.get('/knowledge', (req, res) => {
+  router.get('/knowledge', (req, res) => {
     res.type('html').send(renderKnowledge(getKnowledgeData(db), { editor: readEditorFromCookie(req) }));
   });
-  app.get('/special-days', (req, res) => {
+  router.get('/special-days', (req, res) => {
     res.type('html').send(renderSpecialDays(getSpecialDaysData(db), { editor: readEditorFromCookie(req) }));
   });
   // Guided plan wizard (Phase 4b Amendment §2/§8) — real server-rendered pages
   // under /plan/:date/:slot[...] — the sole entry point for planning a slot.
-  app.use('/plan', wizardPageRouter(db));
-
-  app.get('/display', (req, res) => {
-    const today = getTodayData(db, todayStr());
-    const shopping = getDisplayShoppingData(db);
-    res.type('html').send(renderKiosk({ today, shopping }));
-  });
+  router.use('/plan', wizardPageRouter(db));
 
   // HTML error page for every page route above (Today/Plan/Shopping/Knowledge/
-  // Special Days/the wizard/the kiosk) — must be mounted after them and before
-  // any /api route below, so a thrown error there never leaks a raw Express
-  // stack trace to a household member's phone (Audit 2026-07-18, code #5).
-  // /api's own JSON errorHandler (mounted at the bottom of this file) is separate.
-  app.use(pageErrorHandler);
-
-  // Mounted before the editor gate below: read-only, no identity required (spec
-  // Phase 3 §3). Must not go through editorMiddleware.
-  app.use('/api/display', displayRouter(db));
+  // Special Days/the wizard) — must be mounted after them and before any /api
+  // route below, so a thrown error there never leaks a raw Express stack trace
+  // to a household member's phone (Audit 2026-07-18, code #5). /api's own JSON
+  // errorHandler (mounted at the bottom of this function) is separate.
+  router.use(pageErrorHandler);
 
   const api = express.Router();
   api.use(editorMiddleware);
@@ -155,10 +109,102 @@ function createApp(dbByHousehold) {
   api.use('/special_day_assignments', specialDayAssignmentsRouter(db));
   api.use('/wizard', wizardApiRouter(db));
 
-  app.use('/api', api);
-  app.use('/api', errorHandler);
+  router.use('/api', api);
+  router.use('/api', errorHandler);
+
+  return router;
+}
+
+// dbByHousehold: { rp: db, ps: db }. No per-request household routing before
+// Phase 6b — this factory now dispatches each request to the right household's
+// pre-built route tree (see buildHouseholdRoutes above), with a single blanket
+// authorization gate ahead of dispatch (src/routes/household.js) rather than
+// threading a per-request db through every one of the ~20 router files.
+function createApp(dbByHousehold) {
+  const app = express();
+  app.use(express.static(path.join(__dirname, '..', 'public')));
+  app.use(express.json());
+
+  // Real connectivity + version check (Phase 5) — this replaced the Phase 0
+  // stub ({ok:true, db:'pending', migration:null} always, regardless of actual
+  // state) that once caused a stale-build misdiagnosis: a dead/old process kept
+  // answering health checks as if everything were fine. This is also the Docker
+  // HEALTHCHECK target, so a genuinely broken DB must fail it, not report ok.
+  //
+  // git_commit/built_at close the *other* half of that same failure class
+  // (Audit 2026-07-18, threat: stale-process masking): migration/taxonomy_sha
+  // prove the DB state, but a deploy that changes only JS with no new
+  // migration and no reseed was previously indistinguishable from the old
+  // process at /health. Sourced from GIT_COMMIT/BUILD_TIME env vars baked in
+  // at image build time (Dockerfile ARGs, see OPERATIONS.md "Deploy /
+  // build stamp") — never computed by running git inside the running
+  // container, which may not have git installed or a .git directory at all.
+  //
+  // Household-agnostic: checks rp.db only, same as before Phase 6b split the
+  // db in two -- a single process-level liveness signal, not a per-household one.
+  app.get('/health', (req, res) => {
+    const db = dbByHousehold.rp;
+    try {
+      db.prepare('SELECT 1').get();
+      const migration = currentVersion(db);
+      const taxonomyVersion = db.prepare("SELECT value FROM settings WHERE key = 'taxonomy_version'").get();
+      const taxonomySha256 = db.prepare("SELECT value FROM settings WHERE key = 'taxonomy_json_sha256'").get();
+      res.json({
+        ok: true,
+        db: 'ready',
+        migration,
+        taxonomy_version: taxonomyVersion ? taxonomyVersion.value : null,
+        taxonomy_json_sha256: taxonomySha256 ? taxonomySha256.value : null,
+        git_commit: process.env.GIT_COMMIT || 'unknown',
+        built_at: process.env.BUILD_TIME || 'unknown',
+      });
+    } catch (err) {
+      res.status(503).json({ ok: false, db: 'error', error: err.message });
+    }
+  });
+
+  app.get('/styleguide', (req, res) => {
+    res.type('html').send(renderStyleguide());
+  });
+
+  // Kiosk (Phase 6b DO §3): hardcoded to a single household, resolved once at
+  // boot from KITCHEN_KIOSK_HOUSEHOLD (falls back to 'rp' if unset/invalid) --
+  // deliberately no per-request household resolution, unaffected by any
+  // X-Household header, ?household= query param, or editor cookie/identity.
+  const kioskHousehold = HOUSEHOLDS.includes(process.env.KITCHEN_KIOSK_HOUSEHOLD)
+    ? process.env.KITCHEN_KIOSK_HOUSEHOLD
+    : 'rp';
+  const kioskDb = dbByHousehold[kioskHousehold];
+  app.get('/display', (req, res) => {
+    const today = getTodayData(kioskDb, todayStr());
+    const shopping = getDisplayShoppingData(kioskDb);
+    res.type('html').send(renderKiosk({ today, shopping }));
+  });
+  // Mounted before the household dispatcher below: read-only, no identity
+  // required (spec Phase 3 §3). Must not go through editorMiddleware or
+  // household routing.
+  app.use('/api/display', displayRouter(kioskDb));
+
+  const routesByHousehold = {};
+  for (const key of HOUSEHOLDS) {
+    routesByHousehold[key] = buildHouseholdRoutes(dbByHousehold[key]);
+  }
+
+  // Single blanket authorization gate ahead of every household-scoped route
+  // (mirrors editorMiddleware's own blanket-mount pattern, not planLock's
+  // per-write-site pattern -- see docs/KitchenPlanner_Phase6_Amendment
+  // Phase 6b for why: household-write-ownership is an authorization concern,
+  // not a plans-table-specific domain rule).
+  app.use((req, res, next) => {
+    const resolved = resolveHouseholdRequest(req);
+    if (resolved.status) {
+      return res.status(resolved.status).json({ error: resolved.error });
+    }
+    req.household = resolved.household;
+    routesByHousehold[resolved.household](req, res, next);
+  });
 
   return app;
 }
 
-module.exports = { createApp };
+module.exports = { createApp, buildHouseholdRoutes };

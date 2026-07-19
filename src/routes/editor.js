@@ -16,10 +16,18 @@ function parseCookies(header) {
   return out;
 }
 
-function editorMiddleware(req, res, next) {
+// Header-or-cookie resolution, no validation — shared by editorMiddleware (which
+// validates and 400s) and the Phase 6b household dispatcher (which only needs to
+// know who's asking, before any household-specific gate runs).
+function resolveEditor(req) {
   const cookies = parseCookies(req.headers.cookie);
   const editor = req.get('X-Editor') || cookies.editor;
-  if (!editor || !EDITORS.has(editor)) {
+  return EDITORS.has(editor) ? editor : null;
+}
+
+function editorMiddleware(req, res, next) {
+  const editor = resolveEditor(req);
+  if (!editor) {
     return res.status(400).json({ error: `X-Editor header (or editor cookie) required, must be one of: ${[...EDITORS].join(', ')}` });
   }
   req.editor = editor;
@@ -35,4 +43,4 @@ function readEditorFromCookie(req) {
   return EDITORS.has(cookies.editor) ? cookies.editor : null;
 }
 
-module.exports = { editorMiddleware, readEditorFromCookie, EDITORS };
+module.exports = { editorMiddleware, readEditorFromCookie, resolveEditor, parseCookies, EDITORS };
